@@ -1,0 +1,10 @@
+{
+  "appId": "com.travellist.app",
+  "appName": "TravelList",
+  "webDir": "dist",
+  "plugins": {
+    "LocalNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  }
+}
