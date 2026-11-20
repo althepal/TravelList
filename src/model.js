@@ -255,27 +255,28 @@ export function defaultData() {
     pack('Main', 'Underwear', [], perDay),
     pack('Main', 'Socks', [], perDay),
     pack('Main', 'T-shirts', [], perDay),
-    pack('Main', 'Shorts', [], perDay),
+    pack('Main', 'Shorts'),
     pack('Main', 'Sweatpants'),
     pack('Main', 'Sweatshirt'),
     pack('Main', 'Collar shirt'),
     pack('Main', 'Rain coat'),
+    pack('Main', 'Sliders'),
     pack('Main', 'Bathing suit', ['swim']),
 
-    pack('Main', 'Pills'),
-    pack('Main', 'Ambien'),
+    pack('Main', 'Pills / Ambien'),
     pack('Main', 'Creatine'),
     pack('Main', 'Shots', ['auto:long']),
     pack('Main', 'Toothbrush & toothpaste'),
 
     pack('Main', 'Phone charger'),
     pack('Main', 'Headphones'),
-    pack('Main', 'Laptop'),
+    pack('Main', 'Laptop / case'),
 
     ...["Max's pants / shorts", "Max's shirts", "Max's underwear", "Max's socks"]
       .map((text) => pack('Max', text, [], { ...max, ...perDay })),
     ...["Max's pajamas", "Max's toothbrush", "Max's iPad", "Max's iPad charger"]
       .map((text) => pack('Max', text, [], max)),
+    pack('Max', "Max's Crocs", [], max),
     pack('Max', "Max's bathing suit", ['swim'], max),
 
     ...['Sleeping bag', 'Sleeping pad', 'Tent', 'Pillow', 'Hiking boots', 'Teva shoes',
@@ -285,7 +286,7 @@ export function defaultData() {
     pack('Camping', 'Hiking socks', ['camping'], perDay),
 
     pack('Main', 'Goggles', ['swim']),
-    pack('Main', 'Baseball glove', ['harrison']),
+    pack('Max', "Max's baseball glove", ['harrison'], max),
 
     pack('Main', 'Passports', ['fly']),
     pack('Main', 'Sunglasses', ['fly']),
@@ -293,6 +294,9 @@ export function defaultData() {
     t('door', null, 'Turn off HVAC'),
     t('door', null, 'Turn off recirc pump'),
     t('door', null, 'Take out the trash'),
+    t('door', null, 'Feed fish'),
+    t('door', null, 'Set Chiller (Fish)', ['auto:summer']),
+    t('door', null, 'Replace Filter Socks'),
     t('home', null, 'Turn the HVAC back on'),
     t('home', null, 'Turn the recirc pump back on'),
   ]

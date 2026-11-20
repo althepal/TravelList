@@ -23,7 +23,7 @@ const qty = (data, text) => tripItems(data, data.trips[0]).find((i) => i.text ==
 describe('tripItems', () => {
   it('includes the everyday basics with no questions answered', () => {
     const t = texts(setup())
-    for (const item of ['Laptop', 'Rain coat', 'Underwear', 'Turn off HVAC', 'Pills']) expect(t).toContain(item)
+    for (const item of ['Laptop / case', 'Rain coat', 'Underwear', 'Turn off HVAC', 'Pills / Ambien']) expect(t).toContain(item)
     for (const item of ['Sunglasses', 'Laptop charger', 'Wallet & keys', 'Testosterone', 'Jacket', 'Snacks', 'Stool'])
       expect(t).not.toContain(item)
   })
@@ -57,7 +57,9 @@ describe('tripItems', () => {
 
   it('adds passports and sunglasses when flying and the glove for Harrison\'s', () => {
     expect(texts(setup({ answers: { fly: true } }))).toEqual(expect.arrayContaining(['Passports', 'Sunglasses']))
-    expect(texts(setup({ answers: { harrison: true } }))).toContain('Baseball glove')
+    expect(texts(setup({ answers: { harrison: true } }))).not.toContain("Max's baseball glove")
+    expect(texts(setup({ answers: { harrison: true, max: true } }))).toContain("Max's baseball glove")
+    expect(texts(setup({ answers: { max: true } }))).not.toContain("Max's baseball glove")
   })
 
   it("adds Max's things only when Max comes", () => {
