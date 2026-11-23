@@ -263,8 +263,32 @@ export function deleteQuestion(data, questionId) {
 // Until you edit the master list yourself, saved data follows the latest
 // starting list (so updates to it reach a browser that saved an older one).
 export function refreshStarterList(data) {
-  if (data.masterEdited) return data
   const fresh = defaultData()
+  if (data.masterEdited) {
+    const existingHarrisonItems = data.templates.some((template) =>
+      template.id === 's-max-s-bathing-suit' || template.id === 's-max-s-baseball-glove',
+    )
+    if (!existingHarrisonItems) return data
+    // These Harrison-with-Max packing defaults are part of the app's trip
+    // behavior, so keep them current even after someone edits other master
+    // list entries. Preserve each item's stable ID and per-trip check state.
+    const requiredIds = new Set([
+      's-max-s-bathing-suit',
+      's-max-s-baseball-glove',
+      's-max-s-football-gloves',
+    ])
+    const requiredTemplates = fresh.templates.filter((template) => requiredIds.has(template.id))
+    const templates = [...data.templates]
+    for (const template of requiredTemplates) {
+      const index = templates.findIndex((existing) => existing.id === template.id)
+      if (index === -1) {
+        templates.push(template)
+      } else {
+        templates[index] = { ...templates[index], ...template }
+      }
+    }
+    return { ...data, templates }
+  }
   return { ...data, questions: fresh.questions, templates: fresh.templates }
 }
 
@@ -347,7 +371,7 @@ export function defaultData() {
     ...["Max's pajamas", "Max's toothbrush", "Max's iPad", "Max's iPad charger"]
       .map((text) => pack('Max', text, [], max)),
     pack('Max', "Max's Crocs", [], max),
-    pack('Max', "Max's bathing suit", ['swim'], max),
+    pack('Max', "Max's bathing suit", ['swim', 'harrison'], max),
 
     ...['Sleeping bag', 'Sleeping pad', 'Tent', 'Pillow', 'Hiking boots', 'Teva shoes',
       'Headlamp', 'Flashlight', 'Knife', 'TP', 'Chair', 'Food', 'Electrolytes', 'Cup', 'Spoon',
@@ -356,7 +380,9 @@ export function defaultData() {
     pack('Camping', 'Hiking socks', ['camping'], perDay),
 
     pack('Main', 'Goggles', ['swim']),
-    pack('Max', "Max's baseball glove", ['harrison'], max),
+    // Keeps the id from when it was "baseball glove" so trip check marks survive.
+    pack('Max', "Max's baseball mitt", ['harrison'], { ...max, id: 's-max-s-baseball-glove' }),
+    pack('Max', "Max's football gloves", ['harrison'], max),
 
     pack('Main', 'Passports', ['fly']),
     pack('Main', 'Sunglasses', ['fly']),

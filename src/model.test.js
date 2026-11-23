@@ -55,11 +55,11 @@ describe('tripItems', () => {
     expect(t.filter((x) => x === 'Sleeping bag')).toHaveLength(1)
   })
 
-  it('adds passports and sunglasses when flying and the glove for Harrison\'s', () => {
+  it('adds passports and sunglasses when flying and the mitt for Harrison\'s', () => {
     expect(texts(setup({ answers: { fly: true } }))).toEqual(expect.arrayContaining(['Passports', 'Sunglasses']))
-    expect(texts(setup({ answers: { harrison: true } }))).not.toContain("Max's baseball glove")
-    expect(texts(setup({ answers: { harrison: true, max: true } }))).toContain("Max's baseball glove")
-    expect(texts(setup({ answers: { max: true } }))).not.toContain("Max's baseball glove")
+    expect(texts(setup({ answers: { harrison: true } }))).not.toContain("Max's baseball mitt")
+    expect(texts(setup({ answers: { harrison: true, max: true } }))).toContain("Max's baseball mitt")
+    expect(texts(setup({ answers: { max: true } }))).not.toContain("Max's baseball mitt")
   })
 
   it("adds Max's things only when Max comes", () => {
@@ -125,7 +125,7 @@ describe('deleteQuestion', () => {
     const data = deleteQuestion(deleteQuestion(setup(), 'swim'), 'max')
     expect(data.templates.find((t) => t.text === 'Goggles').when).toEqual([])
     expect(data.templates.find((t) => t.text === "Max's bathing suit"))
-      .toMatchObject({ when: [], requires: null })
+      .toMatchObject({ when: ['harrison'], requires: null })
     expect(data.masterEdited).toBe(true)
   })
 })
