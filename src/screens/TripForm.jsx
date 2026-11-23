@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { TopBar } from '../components'
-import { isAsked, newTrip, nightsOf } from '../model'
+import { newTrip, nightsLabel, nightsOf, saveTrip, tripConditions } from '../model'
 
 export function TripForm({ data, setData, go, today, tripId }) {
   const existing = data.trips.find((t) => t.id === tripId)
@@ -17,9 +17,8 @@ export function TripForm({ data, setData, go, today, tripId }) {
   const datesValid = trip.start && trip.end && trip.end >= trip.start
   // Every question needs an explicit answer: a missed "Bringing Max?" shouldn't silently mean no.
   // Follow-up questions appear as answers come in, e.g. Swimming? after Flying: yes.
-  const asked = datesValid
-    ? data.questions.filter((q) => isAsked(q, trip, data.questions))
-    : data.questions.filter((q) => [].concat(q.askIf ?? []).length === 0)
+  const conditions = datesValid ? tripConditions(trip, data.questions) : null
+  const asked = data.questions.filter((q) => conditions ? conditions.isAsked(q) : q.askIf.length === 0)
   const unanswered = asked.filter((q) => typeof trip.answers[q.id] !== 'boolean')
   const ready = datesValid && unanswered.length === 0
   const nights = datesValid ? nightsOf(trip) : 0
@@ -29,10 +28,7 @@ export function TripForm({ data, setData, go, today, tripId }) {
     e.preventDefault()
     if (!ready) return
     const saved = { ...trip, name: trip.name.trim() }
-    setData((d) => ({
-      ...d,
-      trips: existing ? d.trips.map((t) => (t.id === saved.id ? saved : t)) : [...d.trips, saved],
-    }))
+    setData((d) => saveTrip(d, saved))
     go({ name: 'trip', id: saved.id })
   }
 
@@ -71,7 +67,7 @@ export function TripForm({ data, setData, go, today, tripId }) {
             </div>
             <p className="muted small">
               {datesValid
-                ? nights === 0 ? 'Day trip.' : `${nights} night${nights > 1 ? 's' : ''}. Coming Home reminders start on the last day.`
+                ? nights === 0 ? 'Day trip.' : `${nightsLabel(trip)}. Coming Home reminders start on the last day.`
                 : 'The return date must be on or after the leaving date.'}
             </p>
           </div>

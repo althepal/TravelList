@@ -12,7 +12,7 @@ function errorText(error) {
   return error?.message || 'Could not connect. Check your connection and Firebase setup.'
 }
 
-export function SyncScreen({ go, user, authLoading, syncStatus, syncError, accountMismatch, hasUnsyncedChanges, retry }) {
+export function SyncScreen({ go, onAuthenticated, user, authLoading, syncStatus, syncError, ownerEmail, hasUnsyncedChanges, retry }) {
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
 
@@ -21,6 +21,7 @@ export function SyncScreen({ go, user, authLoading, syncStatus, syncError, accou
     setFormError('')
     try {
       await signInWithGoogle()
+      onAuthenticated?.()
     } catch (error) {
       setFormError(errorText(error))
     } finally {
@@ -29,7 +30,7 @@ export function SyncScreen({ go, user, authLoading, syncStatus, syncError, accou
   }
 
   const logout = async () => {
-    if (hasUnsyncedChanges && !window.confirm("Some changes haven't reached the cloud yet. They'll upload when you sign back in with this account. Sign out anyway?")) return
+    if (hasUnsyncedChanges && !window.confirm("Some changes haven't reached the cloud yet. They'll upload when you sign back in with this account, but signing in with a different account deletes them. Sign out anyway?")) return
     setBusy(true)
     setFormError('')
     try {
@@ -43,7 +44,7 @@ export function SyncScreen({ go, user, authLoading, syncStatus, syncError, accou
 
   return (
     <main>
-      <TopBar title="Sync between devices" onBack={() => go({ name: 'trips' })} backLabel="Trips" />
+      <TopBar title="Account" onBack={() => go({ name: 'trips' })} backLabel="Trips" />
       <section className="prose">
         {!firebaseConfigured ? (
           <p>Firebase setup is incomplete. Add the web app config to the local `.env.local` file and the GitHub repository variables.</p>
@@ -52,7 +53,7 @@ export function SyncScreen({ go, user, authLoading, syncStatus, syncError, accou
         ) : user ? (
           <>
             <div className="card form-card">
-              <p>Signed in as <strong>{user.email}</strong></p>
+              <p>{user.email ? <>Signed in as <strong>{user.email}</strong></> : 'Signed in with Google'}</p>
               <p className="muted small">{syncError || syncStatus}</p>
               {hasUnsyncedChanges && <p className="muted small">Changes not yet in the cloud are saved on this device.</p>}
               {syncError && <button className="btn" onClick={retry}>Try syncing again</button>}
@@ -63,9 +64,12 @@ export function SyncScreen({ go, user, authLoading, syncStatus, syncError, accou
         ) : (
           <>
             <p>Sign in with the same Google account on your iPhone and website to use one shared checklist.</p>
-            <p><strong>Connect the iPhone with your existing checklist first.</strong> If this account already has cloud data, it will replace the local list on this device.</p>
+            {ownerEmail ? (
+              <p>This device's list belongs to <strong>{ownerEmail}</strong>. Signing in with a different account deletes it from this device and loads that account's list instead, or a fresh starter list if it has none.</p>
+            ) : (
+              <p><strong>Connect the iPhone with your existing checklist first.</strong> If this account already has cloud data, it will replace the local list on this device.</p>
+            )}
             <div className="card form-card">
-              {accountMismatch && <p className="error-text" role="alert">This device syncs with {accountMismatch}. Sign in with that account.</p>}
               {formError && <p className="error-text" role="alert">{formError}</p>}
               <button type="button" className="btn primary" onClick={authenticate} disabled={busy}>
                 {busy ? 'Opening Google…' : 'Continue with Google'}

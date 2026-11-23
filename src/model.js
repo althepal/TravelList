@@ -1,5 +1,13 @@
+import { starterLists } from './starter'
+
 // Pure data logic: no React, no Capacitor. Everything the app knows lives in one
-// JSON document shaped like defaultData().
+// JSON document shaped like defaultData(). Data from disk, the cloud or a
+// backup goes through parseData (parseData.js) first, so every field below is
+// always present.
+
+// Bump when the document's shape changes, and add a matching upgrade step in
+// parseData.js. A build refuses to sync with a cloud copy newer than this.
+export const DATA_VERSION = 2
 
 export const CATEGORIES = [
   { id: 'pack', label: 'Pack', empty: 'Nothing to pack yet.' },
@@ -18,7 +26,7 @@ export const AUTO_CONDITIONS = [
   { id: 'auto:long', text: 'More than 3 days' },
 ]
 
-export function newId() {
+function newId() {
   return globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)
 }
 
@@ -28,7 +36,7 @@ export function todayStr(now = new Date()) {
   return dateStr(now)
 }
 
-export function dateStr(d) {
+function dateStr(d) {
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
@@ -44,8 +52,20 @@ export function addDays(s, n) {
   return dateStr(d)
 }
 
+// Whole days from one date to another (negative if `to` is earlier).
+export function daysBetween(from, to) {
+  return Math.round((parseDate(to) - parseDate(from)) / 86400000)
+}
+
 export function nightsOf(trip) {
-  return Math.max(0, Math.round((parseDate(trip.end) - parseDate(trip.start)) / 86400000))
+  return Math.max(0, daysBetween(trip.start, trip.end))
+}
+
+// 'day trip', '1 night', '3 nights'
+export function nightsLabel(trip) {
+  const nights = nightsOf(trip)
+  if (nights === 0) return 'day trip'
+  return `${nights} night${nights > 1 ? 's' : ''}`
 }
 
 export function formatRange(trip) {
@@ -78,22 +98,25 @@ function autoFlags(trip) {
   }
 }
 
+// Answers a trip's condition questions. Build it once per trip and reuse it
+// for every item and question.
+//
 // A condition is an auto condition ('auto:summer') or a question id, which
 // holds when that question is asked on this trip and answered yes.
-function conditionChecker(trip, questions) {
+export function tripConditions(trip, questions) {
   const flags = autoFlags(trip)
+  const byId = new Map(questions.map((q) => [q.id, q]))
   const askedCache = new Map()
   const evaluating = new Set()
-  const askIfOf = (q) => [].concat(q.askIf ?? []).filter((c) => c !== q.id)
   // A question with `askIf` is only asked when any of those conditions holds,
   // e.g. "Swimming?" only when it's summer-ish or flying.
   // Treat any malformed dependency cycle as not asked instead of recursing
-  // forever. The editor and backup importer also reject new cycles.
+  // forever. The editor and parseData also reject new cycles.
   const isAsked = (q) => {
     if (askedCache.has(q.id)) return askedCache.get(q.id)
     if (evaluating.has(q.id)) return false
     evaluating.add(q.id)
-    const conditions = askIfOf(q)
+    const conditions = q.askIf.filter((c) => c !== q.id)
     const result = conditions.length === 0 || conditions.some(holds)
     evaluating.delete(q.id)
     askedCache.set(q.id, result)
@@ -102,10 +125,16 @@ function conditionChecker(trip, questions) {
   // An answer to a question that's no longer asked (dates moved) counts as no.
   const holds = (cond) => {
     if (cond.startsWith('auto:')) return !!flags[cond]
-    const q = questions.find((x) => x.id === cond)
+    const q = byId.get(cond)
     return !!q && isAsked(q) && trip.answers[cond] === true
   }
-  return { holds, isAsked }
+  // An item shows when its `requires` condition (if any) is true AND any of
+  // its `when` conditions is true (or `when` is empty). E.g. Max's bathing
+  // suit: requires Max, when Swimming.
+  const applies = (template) =>
+    (!template.requires || holds(template.requires)) &&
+    (template.when.length === 0 || template.when.some(holds))
+  return { holds, isAsked, applies }
 }
 
 // Returns a loop of question ids (first id repeated at the end, e.g.
@@ -115,8 +144,8 @@ function conditionChecker(trip, questions) {
 export function questionDependencyCycle(questions, startId) {
   const byId = new Map(questions.map((question) => [question.id, question]))
   // Like the trip evaluator, ignore a question depending on itself.
-  const depsOf = (id) => [].concat(byId.get(id).askIf ?? []).filter((c) =>
-    c !== id && typeof c === 'string' && !c.startsWith('auto:') && byId.has(c))
+  const depsOf = (id) => byId.get(id).askIf.filter((c) =>
+    c !== id && !c.startsWith('auto:') && byId.has(c))
   const onPath = new Set()
   const explored = new Set() // fully searched; no reportable loop from here
   const path = []
@@ -145,21 +174,8 @@ export function questionDependencyCycle(questions, startId) {
   return null
 }
 
-export function hasQuestionDependencyCycle(questions) {
-  return questionDependencyCycle(questions) !== null
-}
-
 export function isAsked(question, trip, questions) {
-  return conditionChecker(trip, questions).isAsked(question)
-}
-
-// An item shows when its `requires` condition (if any) is true AND any of its
-// `when` conditions is true (or `when` is empty). E.g. Max's bathing suit:
-// requires Max, when Swimming.
-export function appliesTo(template, trip, questions) {
-  const { holds } = conditionChecker(trip, questions)
-  if (template.requires && !holds(template.requires)) return false
-  return template.when.length === 0 || template.when.some(holds)
+  return tripConditions(trip, questions).isAsked(question)
 }
 
 export function conditionLabel(cond, questions) {
@@ -171,7 +187,7 @@ export function conditionLabel(cond, questions) {
 // Pack items under their headings, in PACK_GROUPS order; empty groups dropped.
 export function groupPackItems(items) {
   return PACK_GROUPS
-    .map((group) => ({ group, items: items.filter((i) => (i.group || 'Main') === group) }))
+    .map((group) => ({ group, items: items.filter((i) => i.group === group) }))
     .filter((g) => g.items.length > 0)
 }
 
@@ -182,14 +198,15 @@ export function groupPackItems(items) {
 // answers, check marks, items hidden for this trip, and one-off extras.
 export function tripItems(data, trip) {
   const nights = nightsOf(trip)
+  const { applies } = tripConditions(trip, data.questions)
   const fromTemplates = data.templates
-    .filter((t) => !trip.hidden[t.id] && appliesTo(t, trip, data.questions))
+    .filter((t) => !trip.hidden[t.id] && applies(t))
     .map((t) => ({
       key: `t:${t.id}`,
       templateId: t.id,
       category: t.category,
       text: t.text,
-      group: t.group || 'Main',
+      group: t.group,
       qty: t.perDay ? nights + 1 : null,
       checked: !!trip.checked[`t:${t.id}`],
     }))
@@ -215,94 +232,114 @@ export function tripStatus(trip, today = todayStr()) {
   return 'active'
 }
 
-// ---------- mutations (return new data; never mutate) ----------
+// ---------- edits (return new data; never mutate) ----------
+
+const upsert = (list, item) =>
+  list.some((x) => x.id === item.id) ? list.map((x) => (x.id === item.id ? item : x)) : [...list, item]
+
+const without = (record, key) => {
+  if (!(key in record)) return record
+  const { [key]: _removed, ...rest } = record
+  return rest
+}
 
 export function updateTrip(data, tripId, fn) {
   return { ...data, trips: data.trips.map((t) => (t.id === tripId ? fn(t) : t)) }
 }
 
+export function saveTrip(data, trip) {
+  return { ...data, trips: upsert(data.trips, trip) }
+}
+
+export function deleteTrip(data, tripId) {
+  return { ...data, trips: data.trips.filter((t) => t.id !== tripId) }
+}
+
 export function toggleChecked(data, tripId, key) {
   return updateTrip(data, tripId, (t) => ({
     ...t,
-    checked: { ...t.checked, [key]: !t.checked[key] },
+    checked: t.checked[key] ? without(t.checked, key) : { ...t.checked, [key]: true },
   }))
 }
 
-export function makePermanent(data, tripId, extraId, when, requires = null, options = {}) {
-  const trip = data.trips.find((t) => t.id === tripId)
-  const extra = trip.extras.find((x) => x.id === extraId)
-  const template = {
-    id: newId(), category: extra.category, text: extra.text, when, requires,
-    group: extra.category === 'pack' ? (options.group || 'Main') : null,
-    perDay: extra.category === 'pack' && options.perDay === true,
-  }
-  const { [`x:${extraId}`]: wasChecked, ...checked } = trip.checked
-  const next = { ...data, masterEdited: true, templates: [...data.templates, template] }
-  return updateTrip(next, tripId, (t) => ({
+// "Not needed this trip" (hidden) or restored.
+export function setHidden(data, tripId, templateId, hidden) {
+  return updateTrip(data, tripId, (t) => ({
+    ...t,
+    hidden: hidden ? { ...t.hidden, [templateId]: true } : without(t.hidden, templateId),
+  }))
+}
+
+export function addExtra(data, tripId, category, text) {
+  return updateTrip(data, tripId, (t) => ({ ...t, extras: [...t.extras, { id: newId(), category, text }] }))
+}
+
+export function removeExtra(data, tripId, extraId) {
+  return updateTrip(data, tripId, (t) => ({
     ...t,
     extras: t.extras.filter((x) => x.id !== extraId),
-    checked: wasChecked ? { ...checked, [`t:${template.id}`]: true } : checked,
+    checked: without(t.checked, `x:${extraId}`),
   }))
+}
+
+export function saveTemplate(data, template) {
+  return { ...data, templates: upsert(data.templates, template) }
+}
+
+// Removed from the master list and from every trip's check marks and skips.
+export function deleteTemplate(data, templateId) {
+  return {
+    ...data,
+    templates: data.templates.filter((t) => t.id !== templateId),
+    trips: data.trips.map((t) => ({
+      ...t,
+      checked: without(t.checked, `t:${templateId}`),
+      hidden: without(t.hidden, templateId),
+    })),
+  }
+}
+
+// Turns a trip's one-off into a master list item (`template`, already edited
+// by the user), keeping its check mark on this trip.
+export function makePermanent(data, tripId, extraId, template) {
+  const trip = data.trips.find((t) => t.id === tripId)
+  const wasChecked = !!trip.checked[`x:${extraId}`]
+  const next = removeExtra(saveTemplate(data, template), tripId, extraId)
+  if (!wasChecked) return next
+  return updateTrip(next, tripId, (t) => ({ ...t, checked: { ...t.checked, [`t:${template.id}`]: true } }))
+}
+
+export function saveQuestion(data, question) {
+  return { ...data, questions: upsert(data.questions, question) }
 }
 
 export function deleteQuestion(data, questionId) {
   return {
     ...data,
-    masterEdited: true,
     questions: data.questions
       .filter((q) => q.id !== questionId)
-      .map((q) => (q.askIf ? { ...q, askIf: [].concat(q.askIf).filter((c) => c !== questionId) } : q)),
+      .map((q) => ({ ...q, askIf: q.askIf.filter((c) => c !== questionId) })),
     templates: data.templates.map((t) => ({
       ...t,
       when: t.when.filter((c) => c !== questionId),
       requires: t.requires === questionId ? null : t.requires,
     })),
+    trips: data.trips.map((t) => ({ ...t, answers: without(t.answers, questionId) })),
   }
 }
 
-// Until you edit the master list yourself, saved data follows the latest
-// starting list (so updates to it reach a browser that saved an older one).
-// An edited list gets each starter update once, tracked by starterRevision,
-// so your later edits and deletes stick.
-export const STARTER_REVISION = 3
+// ---------- new things ----------
 
-export function refreshStarterList(data) {
-  if (!data.masterEdited) {
-    const fresh = defaultData()
-    return { ...data, questions: fresh.questions, templates: fresh.templates, starterRevision: STARTER_REVISION }
+export function newTemplate(category, fields = {}) {
+  return {
+    id: newId(), category, text: '', when: [], requires: null,
+    group: category === 'pack' ? 'Main' : null, perDay: false,
+    ...fields,
   }
-  if ((data.starterRevision ?? 1) >= STARTER_REVISION) return data
-  return { ...starterUpdate(data), starterRevision: STARTER_REVISION }
 }
 
-// Revision 3: add "Plato's food", remove the mistaken Out the Door car-charge
-// item, and bring Max's Harrison items up to date when relevant.
-function starterUpdate(data) {
-  const fresh = new Map(defaultData().templates.map((t) => [t.id, t]))
-  const templates = [...data.templates]
-  const indexOf = (id) => templates.findIndex((t) => t.id === id)
-
-  for (const id of ['s-plato-s-food']) {
-    const item = fresh.get(id)
-    if (!templates.some((t) => t.id === id || (t.category === item.category && t.text === item.text))) {
-      templates.push(item)
-    }
-  }
-  const carChargeIndex = indexOf('s-charge-car-for-trip')
-  if (carChargeIndex !== -1) templates.splice(carChargeIndex, 1)
-
-  const harrisonIds = ['s-max-s-bathing-suit', 's-max-s-baseball-glove', 's-max-s-football-gloves']
-  const questionIds = new Set(data.questions.map((q) => q.id))
-  if (questionIds.has('max') && questionIds.has('harrison') && harrisonIds.some((id) => indexOf(id) !== -1)) {
-    for (const id of harrisonIds) {
-      const item = { ...fresh.get(id) }
-      item.when = item.when.filter((c) => c.startsWith('auto:') || questionIds.has(c))
-      const index = indexOf(id)
-      if (index !== -1) templates[index] = item
-      else templates.splice(indexOf('s-max-s-baseball-glove') + 1 || templates.length, 0, item)
-    }
-  }
-  return { ...data, templates }
+export function newQuestion() {
+  return { id: newId(), text: '', short: '', askIf: [] }
 }
 
 export function newTrip(today = todayStr()) {
@@ -318,6 +355,10 @@ export function newTrip(today = todayStr()) {
     headingHome: false,
     ended: false,
   }
+}
+
+export function defaultData() {
+  return { version: DATA_VERSION, ...starterLists(), trips: [] }
 }
 
 // ---------- what the iOS Shortcuts action reads ----------
@@ -338,77 +379,4 @@ export function comingHomeSnapshot(data) {
           .map((i) => i.text),
       })),
   }
-}
-
-// ---------- starter data ----------
-
-export function defaultData() {
-  const questions = [
-    { id: 'max', text: 'Bringing Max?', short: 'Max' },
-    { id: 'harrison', text: 'Going to Harrison?', short: 'Harrison' },
-    { id: 'camping', text: 'Camping?', short: 'Camping' },
-    { id: 'fly', text: 'Flying?', short: 'Flying' },
-    { id: 'swim', text: 'Swimming?', short: 'Swimming', askIf: ['auto:summer', 'fly'] },
-  ]
-  // Ids come from the text so they stay put when the starting list changes.
-  const t = (category, group, text, when = [], extra = {}) => ({
-    id: `s-${text.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-    category, group, text, when, requires: null, perDay: false, ...extra,
-  })
-  const pack = (group, text, when, extra) => t('pack', group, text, when, extra)
-  const max = { requires: 'max' }
-  const perDay = { perDay: true }
-  const templates = [
-    pack('Main', 'Underwear', [], perDay),
-    pack('Main', 'Socks', [], perDay),
-    pack('Main', 'T-shirts', [], perDay),
-    pack('Main', 'Shorts'),
-    pack('Main', 'Sweatpants'),
-    pack('Main', 'Sweatshirt'),
-    pack('Main', 'Collar shirt'),
-    pack('Main', 'Rain coat'),
-    pack('Main', 'Sliders'),
-    pack('Main', 'Bathing suit', ['swim']),
-
-    pack('Main', 'Pills / Ambien'),
-    pack('Main', 'Creatine'),
-    pack('Main', 'Shots', ['auto:long']),
-    pack('Main', 'Toothbrush & toothpaste'),
-
-    pack('Main', 'Phone charger'),
-    pack('Main', 'Headphones'),
-    pack('Main', 'Laptop / case'),
-
-    ...["Max's pants / shorts", "Max's shirts", "Max's underwear", "Max's socks"]
-      .map((text) => pack('Max', text, [], { ...max, ...perDay })),
-    ...["Max's pajamas", "Max's toothbrush", "Max's iPad", "Max's iPad charger"]
-      .map((text) => pack('Max', text, [], max)),
-    pack('Max', "Max's Crocs", [], max),
-    pack('Max', "Max's bathing suit", ['swim', 'harrison'], max),
-
-    ...['Sleeping bag', 'Sleeping pad', 'Tent', 'Pillow', 'Hiking boots', 'Teva shoes',
-      'Headlamp', 'Flashlight', 'Knife', 'TP', 'Chair', 'Food', 'Electrolytes', 'Cup', 'Spoon',
-      'Camelback', 'Bug spray',
-    ].map((text) => pack('Camping', text, ['camping'])),
-    pack('Camping', 'Hiking socks', ['camping'], perDay),
-
-    pack('Main', 'Goggles', ['swim']),
-    // Keeps the id from when it was "baseball glove" so trip check marks survive.
-    pack('Max', "Max's baseball mitt", ['harrison'], { ...max, id: 's-max-s-baseball-glove' }),
-    pack('Max', "Max's football gloves", ['harrison'], max),
-
-    pack('Main', 'Passports', ['fly']),
-    pack('Main', 'Sunglasses', ['fly']),
-
-    t('door', null, 'Turn off HVAC'),
-    t('door', null, 'Turn off recirc pump'),
-    t('door', null, 'Take out the trash'),
-    t('door', null, 'Feed fish'),
-    t('door', null, "Plato's food"),
-    t('door', null, 'Set Chiller (Fish)', ['auto:summer']),
-    t('door', null, 'Replace Filter Socks'),
-    t('home', null, 'Turn the HVAC back on'),
-    t('home', null, 'Turn the recirc pump back on'),
-  ]
-  return { version: 1, masterEdited: false, starterRevision: STARTER_REVISION, questions, templates, trips: [] }
 }

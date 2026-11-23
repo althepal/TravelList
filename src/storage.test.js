@@ -9,7 +9,7 @@ vi.mock('@capacitor/filesystem', () => ({
 
 import { Filesystem } from '@capacitor/filesystem'
 import { defaultData } from './model'
-import { loadData, saveData, saveSyncState } from './storage'
+import { keepUnreadableData, loadData, saveData, saveSyncState } from './storage'
 
 describe('loadData', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -24,6 +24,22 @@ describe('loadData', () => {
     Filesystem.readFile.mockRejectedValue(error)
     await expect(loadData()).rejects.toBe(error)
     expect(Filesystem.writeFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('keepUnreadableData', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('copies the saved list aside, finishing before a later save replaces it', async () => {
+    Filesystem.readFile.mockResolvedValue({ data: '{"broken": true}' })
+    const order = []
+    Filesystem.writeFile.mockImplementation(async ({ path, data }) => order.push([path, data]))
+    const kept = keepUnreadableData(new Date('2026-11-23T15:04:05.678Z'))
+    const saved = saveData(defaultData())
+    await kept
+    await saved
+    expect(order[0]).toEqual(['travellist-unreadable-20261123T150405Z.json', '{"broken": true}'])
+    expect(order[1][0]).toBe('travellist.json')
   })
 })
 

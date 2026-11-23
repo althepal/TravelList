@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
-import { comingHomeSnapshot, defaultData, refreshStarterList } from './model'
+import { comingHomeSnapshot, defaultData } from './model'
+import { parseData } from './parseData'
 
 // On the phone, data lives in the app's Documents folder: it's included in
 // iCloud device backups and visible in the Files app (On My iPhone ›
@@ -43,7 +44,19 @@ function writeFile(path, text) {
 
 export async function loadData() {
   const text = await readText(DATA_FILE)
-  return text ? refreshStarterList(JSON.parse(text)) : defaultData()
+  return text ? parseData(JSON.parse(text)) : defaultData()
+}
+
+// Before a list the app couldn't read is replaced, keep it beside the main file
+// (visible in the Files app) so nothing is lost. Throws if the copy fails, so
+// the caller can leave the original alone.
+export function keepUnreadableData(now = new Date()) {
+  return enqueue(async () => {
+    const text = await readText(DATA_FILE)
+    if (!text) return
+    const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+    await writeFile(`travellist-unreadable-${stamp}.json`, text)
+  })
 }
 
 // One queued step, so each list and its Shortcuts snapshot are written together.

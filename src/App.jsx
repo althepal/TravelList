@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { App as CapApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
-import { loadData, saveData } from './storage'
+import { keepUnreadableData, loadData, saveData } from './storage'
 import { syncReminders } from './reminders'
 import { todayStr } from './model'
 import { TripsScreen } from './screens/TripsScreen'
@@ -12,13 +12,16 @@ import { MasterScreen } from './screens/MasterScreen'
 import { HelpScreen } from './screens/HelpScreen'
 import { DataBackupScreen } from './screens/DataBackupScreen'
 import { SyncScreen } from './screens/SyncScreen'
-import { useCloudSync } from './useCloudSync'
+import { LoadFailedScreen } from './screens/LoadFailedScreen'
+import { useCloudSync } from './useCloudSync.jsx'
 
 export default function App() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
+  const [loadError, setLoadError] = useState(null)
   // screen: trips | trip | tripForm | master | help | dataBackup | sync
   const [screen, setScreen] = useState({ name: 'trips' })
+  const [notice, setNotice] = useState('')
   const [today, setToday] = useState(todayStr())
   const loaded = useRef(false)
 
@@ -28,7 +31,7 @@ export default function App() {
         loaded.current = true
         setData(d)
       })
-      .catch((e) => setError(`Couldn't load your lists: ${e.message}`))
+      .catch((e) => setLoadError(e.message || String(e)))
   }, [])
 
   useEffect(() => {
@@ -75,11 +78,39 @@ export default function App() {
     window.scrollTo(0, 0) // returns a Promise in newer Chrome; don't hand it to React
   }, [screen])
 
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(''), 3000)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  // Copy the unreadable list aside first; if that fails, nothing is replaced.
+  const restoreAfterLoadFailure = async (restored) => {
+    try {
+      await keepUnreadableData()
+    } catch (e) {
+      throw new Error(`Couldn't keep a copy of the list that failed to load, so nothing was replaced: ${e.message}`)
+    }
+    loaded.current = true
+    setLoadError(null)
+    setData(restored)
+  }
+
   if (!data) {
-    return <div className="app"><p className="muted pad">{error ?? 'Loading…'}</p></div>
+    return (
+      <div className="app">
+        {loadError
+          ? <LoadFailedScreen message={loadError} onRestore={restoreAfterLoadFailure} />
+          : <p className="muted pad">Loading…</p>}
+      </div>
+    )
   }
 
   const go = setScreen
+  const finishGoogleSignIn = () => {
+    setNotice('Signed in with Google')
+    go({ name: 'trips' })
+  }
   const props = { data, setData, go, today }
   let body
   if (screen.name === 'trip' && data.trips.some((t) => t.id === screen.id)) {
@@ -93,9 +124,9 @@ export default function App() {
   } else if (screen.name === 'dataBackup') {
     body = <DataBackupScreen {...props} />
   } else if (screen.name === 'sync') {
-    body = <SyncScreen go={go} {...sync} />
+    body = <SyncScreen go={go} onAuthenticated={finishGoogleSignIn} {...sync} />
   } else {
-    body = <TripsScreen {...props} />
+    body = <TripsScreen {...props} user={sync.user} authLoading={sync.authLoading} />
   }
 
   return (
@@ -104,6 +135,12 @@ export default function App() {
         <div className="error-banner" role="alert">
           <span>{error}</span>
           <button className="link" onClick={() => setError(null)}>Dismiss</button>
+        </div>
+      )}
+      {notice && (
+        <div className="success-banner" role="status">
+          <span>{notice}</span>
+          <button className="link" onClick={() => setNotice('')}>Dismiss</button>
         </div>
       )}
       {body}

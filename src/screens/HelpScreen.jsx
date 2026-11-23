@@ -27,8 +27,9 @@ export function HelpScreen({ go }) {
         </p>
         <h2>Your data</h2>
         <p>
-          Everything is stored on this device only, in <b>Files › On My iPhone or iPad › TravelList</b>. It's included
-          in your regular iPhone or iPad iCloud backup.
+          Your list is saved on this device, in <b>Files › On My iPhone or iPad › TravelList</b>, and included
+          in your regular iPhone or iPad iCloud backup. If you sign in under <b>Account</b>, a copy is also
+          kept in your account so your other devices stay up to date.
         </p>
       </section>
     </main>

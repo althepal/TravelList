@@ -41,7 +41,7 @@ enum ComingHomeSnapshot {
     struct Trip: Decodable {
         let name: String
         let end: String // yyyy-MM-dd, local calendar day
-        let remindUntil: String?
+        let remindUntil: String // yyyy-MM-dd, last day of car reminders
         let headingHome: Bool
         let items: [String]
     }
@@ -61,9 +61,8 @@ enum ComingHomeSnapshot {
         formatter.dateFormat = "yyyy-MM-dd"
         let today = formatter.string(from: now)
 
-        // This Shortcut reminder uses a three-day post-trip cutoff; the app's
-        // Coming Home state remains active until the trip is ended.
-        // Apply the cutoff even for snapshots written by an older app.
+        // This Shortcut reminder stops at remindUntil (three days after the
+        // trip); the app's Coming Home state remains active until the trip is ended.
         let due = file.trips.filter { trip in
             ReminderWindow.shouldRemind(
                 today: today,

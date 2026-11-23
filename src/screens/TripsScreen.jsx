@@ -1,26 +1,25 @@
 import { Capacitor } from '@capacitor/core'
-import { formatRange, isComingHome, nightsOf, parseDate, tripItems, tripStatus } from '../model'
+import { daysBetween, formatRange, isComingHome, nightsLabel, tripItems, tripStatus } from '../model'
 
 function statusText(trip, today) {
   const status = tripStatus(trip, today)
   if (status === 'past') return 'Done'
   if (isComingHome(trip, today)) return 'Coming home'
   if (status === 'active') return 'On the trip'
-  const days = Math.round((parseDate(trip.start) - parseDate(today)) / 86400000)
+  const days = daysBetween(today, trip.start)
   return days === 1 ? 'Tomorrow' : `In ${days} days`
 }
 
 function TripCard({ data, trip, today, go }) {
   const items = tripItems(data, trip)
   const done = items.filter((i) => i.checked).length
-  const nights = nightsOf(trip)
   const status = statusText(trip, today)
   return (
     <button className="card trip-card" onClick={() => go({ name: 'trip', id: trip.id })}>
       <div className="trip-card-main">
         <strong>{trip.name || 'Untitled trip'}</strong>
         <span className="muted small">
-          {formatRange(trip)} · {nights === 0 ? 'day trip' : `${nights} night${nights > 1 ? 's' : ''}`}
+          {formatRange(trip)} · {nightsLabel(trip)}
         </span>
       </div>
       <div className="trip-card-side">
@@ -31,9 +30,10 @@ function TripCard({ data, trip, today, go }) {
   )
 }
 
-export function TripsScreen({ data, go, today }) {
+export function TripsScreen({ data, go, today, user, authLoading }) {
   const current = data.trips.filter((t) => !t.ended).sort((a, b) => a.start.localeCompare(b.start))
   const past = data.trips.filter((t) => t.ended).sort((a, b) => b.start.localeCompare(a.start))
+  const accountDetail = authLoading ? 'Checking…' : user ? user.email || 'Signed in' : 'Sign in'
   return (
     <main>
       <header className="hero">
@@ -61,7 +61,10 @@ export function TripsScreen({ data, go, today }) {
             <span>Data & backup</span><span className="muted">Import or export ›</span>
           </button>
           <button className="list-row" onClick={() => go({ name: 'sync' })}>
-            <span>Sync between devices</span><span className="muted">Account ›</span>
+            <span>Account</span>
+            <span className={`account-detail ${authLoading || user ? 'muted' : 'sign-in'}`}>
+              {accountDetail} <span aria-hidden="true">›</span>
+            </span>
           </button>
           {Capacitor.isNativePlatform() && (
             <button className="list-row" onClick={() => go({ name: 'help' })}>

@@ -12,16 +12,6 @@ struct ReminderWindowTests {
             headingHome: false, hasItems: true
         ))
 
-        // Old snapshots have no remindUntil; derive the same 3-day window.
-        precondition(ReminderWindow.shouldRemind(
-            today: "2026-12-07", end: "2026-12-04", remindUntil: nil,
-            headingHome: false, hasItems: true
-        ))
-        precondition(!ReminderWindow.shouldRemind(
-            today: "2026-12-08", end: "2026-12-04", remindUntil: nil,
-            headingHome: true, hasItems: true
-        ))
-
         precondition(ReminderWindow.shouldRemind(
             today: "2026-12-02", end: "2026-12-04", remindUntil: "2026-12-07",
             headingHome: true, hasItems: true

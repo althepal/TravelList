@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  comingHomeSnapshot, defaultData, deleteQuestion, groupPackItems, isAsked, isComingHome, makePermanent,
-  nightsOf, questionDependencyCycle, refreshStarterList, STARTER_REVISION, toggleChecked, tripItems,
+  addExtra, comingHomeSnapshot, defaultData, deleteQuestion, deleteTemplate, groupPackItems, isAsked, isComingHome,
+  makePermanent, newTemplate, nightsLabel, nightsOf, questionDependencyCycle, removeExtra, saveTemplate, setHidden,
+  toggleChecked, tripItems,
 } from './model'
 import { plannedReminders } from './reminders'
 
@@ -106,27 +107,75 @@ describe('makePermanent', () => {
   it('moves a one-off to the master list and keeps its check mark', () => {
     let data = setup({ extras: [{ id: 'x1', category: 'pack', text: 'Ski boots' }] })
     data = toggleChecked(data, 'T', 'x:x1')
-    data = makePermanent(data, 'T', 'x1', ['auto:winter'], 'max')
-    expect(data.templates.find((t) => t.text === 'Ski boots')).toMatchObject({ when: ['auto:winter'], requires: 'max' })
+    const template = newTemplate('pack', { text: 'Ski boots', when: ['auto:winter'], requires: 'max', group: 'Max', perDay: true })
+    data = makePermanent(data, 'T', 'x1', template)
+    expect(data.templates.at(-1)).toEqual(template)
     expect(data.trips[0].extras).toEqual([])
+    expect(data.trips[0].checked).toEqual({ [`t:${template.id}`]: true })
     data = { ...data, trips: [{ ...data.trips[0], answers: { max: true } }] }
-    expect(tripItems(data, data.trips[0]).find((i) => i.text === 'Ski boots').checked).toBe(true)
+    expect(tripItems(data, data.trips[0]).find((i) => i.text === 'Ski boots')).toMatchObject({ checked: true, group: 'Max', qty: 4 })
+  })
+})
+
+describe('edits', () => {
+  it('saveTemplate adds a new item and replaces an existing one in place', () => {
+    const data = setup()
+    const added = saveTemplate(data, newTemplate('door', { text: 'Lock up' }))
+    expect(added.templates.at(-1).text).toBe('Lock up')
+    const renamed = saveTemplate(added, { ...added.templates[0], text: 'Undies' })
+    expect(renamed.templates.map((t) => t.text).slice(0, 2)).toEqual(['Undies', 'Socks'])
+    expect(renamed.templates).toHaveLength(added.templates.length)
   })
 
-  it('keeps Pack heading and per-day options when promoting an item', () => {
-    const data = setup({ extras: [{ id: 'x2', category: 'pack', text: 'Trip-only boots' }] })
-    const promoted = makePermanent(data, 'T', 'x2', [], null, { group: 'Max', perDay: true })
-    expect(promoted.templates.find((item) => item.text === 'Trip-only boots')).toMatchObject({ group: 'Max', perDay: true })
+  it('deleteTemplate also clears its check marks and skips on every trip', () => {
+    const id = idOf(defaultData(), 'Socks')
+    let data = setup({ checked: { [`t:${id}`]: true, 't:other': true }, hidden: { [id]: true } })
+    data = deleteTemplate(data, id)
+    expect(data.templates.some((t) => t.id === id)).toBe(false)
+    expect(data.trips[0].checked).toEqual({ 't:other': true })
+    expect(data.trips[0].hidden).toEqual({})
+  })
+
+  it('setHidden skips an item for one trip and restores it without leaving a key behind', () => {
+    const id = idOf(defaultData(), 'Socks')
+    const hidden = setHidden(setup(), 'T', id, true)
+    expect(texts(hidden)).not.toContain('Socks')
+    const restored = setHidden(hidden, 'T', id, false)
+    expect(restored.trips[0].hidden).toEqual({})
+    expect(texts(restored)).toContain('Socks')
+  })
+
+  it('removeExtra also clears its check mark', () => {
+    let data = addExtra(setup(), 'T', 'pack', 'Ski boots')
+    const extraId = data.trips[0].extras[0].id
+    data = toggleChecked(data, 'T', `x:${extraId}`)
+    data = removeExtra(data, 'T', extraId)
+    expect(data.trips[0].extras).toEqual([])
+    expect(data.trips[0].checked).toEqual({})
+  })
+
+  it('unchecking removes the check mark', () => {
+    const data = toggleChecked(toggleChecked(setup(), 'T', 't:a'), 'T', 't:a')
+    expect(data.trips[0].checked).toEqual({})
   })
 })
 
 describe('deleteQuestion', () => {
-  it('removes the question from item conditions and "only if"', () => {
-    const data = deleteQuestion(deleteQuestion(setup(), 'swim'), 'max')
-    expect(data.templates.find((t) => t.text === 'Goggles').when).toEqual([])
+  it('removes the question from item conditions, "only if", follow-ups and answers', () => {
+    const data = deleteQuestion(deleteQuestion(setup({ answers: { max: true, fly: false } }), 'fly'), 'max')
+    expect(data.templates.find((t) => t.text === 'Passports').when).toEqual([])
     expect(data.templates.find((t) => t.text === "Max's bathing suit"))
-      .toMatchObject({ when: ['harrison'], requires: null })
-    expect(data.masterEdited).toBe(true)
+      .toMatchObject({ when: ['swim', 'harrison'], requires: null })
+    expect(data.questions.find((q) => q.id === 'swim').askIf).toEqual(['auto:summer'])
+    expect(data.trips[0].answers).toEqual({})
+  })
+})
+
+describe('nightsLabel', () => {
+  it('says day trip, 1 night, or N nights', () => {
+    expect(nightsLabel({ start: '2026-12-01', end: '2026-12-01' })).toBe('day trip')
+    expect(nightsLabel({ start: '2026-12-01', end: '2026-12-02' })).toBe('1 night')
+    expect(nightsLabel({ start: '2026-12-01', end: '2026-12-04' })).toBe('3 nights')
   })
 })
 
@@ -178,71 +227,15 @@ describe('starter list', () => {
     const ids = defaultData().templates.map((t) => t.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
-
-  it('replaces an old saved starting list until the master list is edited', () => {
-    const old = { ...setup(), templates: [{ id: 'seed1', category: 'pack', text: 'Wallet & keys', when: [] }] }
-    expect(refreshStarterList(old).templates.map((t) => t.text)).not.toContain('Wallet & keys')
-    expect(refreshStarterList(old).trips).toEqual(old.trips)
-    const edited = { ...old, masterEdited: true, starterRevision: STARTER_REVISION }
-    expect(refreshStarterList(edited)).toBe(edited)
-  })
-
-  describe('one-time update of an edited list', () => {
-    const ids = (data) => data.templates.map((t) => t.id)
-    const oldEdited = () => {
-      const data = setup()
-      return {
-        ...data,
-        masterEdited: true,
-        starterRevision: undefined,
-        templates: data.templates
-          .filter((t) => !['s-max-s-football-gloves', 's-charge-car-for-trip', 's-plato-s-food'].includes(t.id))
-          .map((t) => t.id === 's-max-s-baseball-glove' ? { ...t, text: "Max's baseball glove" } : t)
-          .concat({ id: 's-charge-car-for-trip', category: 'door', text: 'Charge car for trip', when: [], requires: null, group: null, perDay: false }),
-      }
-    }
-
-    it('adds Plato\'s food, removes the car-charge checklist item, and updates Harrison items', () => {
-      const next = refreshStarterList(oldEdited())
-      expect(next.starterRevision).toBe(STARTER_REVISION)
-      expect(ids(next)).toContain('s-plato-s-food')
-      expect(ids(next)).not.toContain('s-charge-car-for-trip')
-      expect(next.templates.find((t) => t.id === 's-max-s-baseball-glove').text).toBe("Max's baseball mitt")
-      const glove = ids(next).indexOf('s-max-s-baseball-glove')
-      expect(ids(next)[glove + 1]).toBe('s-max-s-football-gloves')
-    })
-
-    it('runs once, so later edits and deletes stick', () => {
-      const updated = refreshStarterList(oldEdited())
-      const edited = {
-        ...updated,
-        templates: updated.templates
-          .filter((t) => t.id !== 's-max-s-football-gloves' && t.id !== 's-plato-s-food')
-          .map((t) => t.id === 's-max-s-baseball-glove' ? { ...t, text: 'Glove' } : t),
-      }
-      expect(refreshStarterList(edited)).toBe(edited)
-    })
-
-    it('leaves the Harrison items alone when their questions were deleted', () => {
-      const next = refreshStarterList(deleteQuestion(oldEdited(), 'max'))
-      expect(ids(next)).not.toContain('s-max-s-football-gloves')
-      expect(next.templates.every((t) => t.requires !== 'max')).toBe(true)
-    })
-
-    it('drops a condition on a deleted question', () => {
-      const next = refreshStarterList(deleteQuestion(oldEdited(), 'swim'))
-      expect(next.templates.find((t) => t.id === 's-max-s-bathing-suit').when).toEqual(['harrison'])
-    })
-  })
 })
 
 describe('questionDependencyCycle', () => {
-  const q = (id, askIf) => ({ id, text: `${id}?`, short: id, askIf })
+  const q = (id, askIf = []) => ({ id, text: `${id}?`, short: id, askIf })
   const loop = [q('a', ['b']), q('b', ['a', 'auto:summer']), q('c')]
 
   it('finds a loop and ignores self-dependencies and auto conditions', () => {
     expect(questionDependencyCycle(loop)).toEqual(['a', 'b', 'a'])
-    expect(questionDependencyCycle([q('a', ['a', 'auto:winter']), q('b', 'a')])).toBeNull()
+    expect(questionDependencyCycle([q('a', ['a', 'auto:winter']), q('b', ['a'])])).toBeNull()
     expect(questionDependencyCycle(defaultData().questions)).toBeNull()
   })
 

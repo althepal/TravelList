@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Capacitor } from '@capacitor/core'
-import { ConditionPicker, ConfirmSheet, RequirePicker, Sheet, Toggle, TopBar } from '../components'
+import { ConfirmSheet, Sheet, TopBar } from '../components'
 import {
-  appliesTo, CATEGORIES, formatRange, groupPackItems, isAsked, isComingHome, makePermanent, newId, nightsOf,
-  PACK_GROUPS, toggleChecked, tripItems, updateTrip,
+  addExtra, CATEGORIES, deleteTrip, formatRange, groupPackItems, isComingHome, makePermanent, newTemplate, nightsLabel,
+  removeExtra, setHidden, toggleChecked, tripConditions, tripItems, updateTrip,
 } from '../model'
+import { TemplateSheet } from './TemplateSheet'
 
 function AddOneOff({ onAdd }) {
   const [text, setText] = useState('')
@@ -42,29 +43,24 @@ export function TripScreen({ data, setData, go, today, tripId }) {
   const trip = data.trips.find((t) => t.id === tripId)
   const [hideCompleted, setHideCompleted] = useState(false)
   const [menuItem, setMenuItem] = useState(null)
-  const [promoting, setPromoting] = useState(null) // {item, when}
+  const [promoting, setPromoting] = useState(null) // { extraId, template }
   const [confirm, setConfirm] = useState(null)
 
   const items = tripItems(data, trip)
   const comingHome = isComingHome(trip, today)
-  const nights = nightsOf(trip)
   const done = items.filter((i) => i.checked).length
+  const conditions = tripConditions(trip, data.questions)
   const unanswered = data.questions.filter((question) =>
-    isAsked(question, trip, data.questions) && typeof trip.answers[question.id] !== 'boolean',
+    conditions.isAsked(question) && typeof trip.answers[question.id] !== 'boolean',
   )
-  const hiddenTemplates = data.templates.filter((t) => trip.hidden[t.id] && appliesTo(t, trip, data.questions))
+  const hiddenTemplates = data.templates.filter((t) => trip.hidden[t.id] && conditions.applies(t))
 
   const patch = (p) => setData((d) => updateTrip(d, trip.id, (t) => ({ ...t, ...p })))
-  const addExtra = (category, text) =>
-    setData((d) => updateTrip(d, trip.id, (t) => ({ ...t, extras: [...t.extras, { id: newId(), category, text }] })))
-  const setHidden = (templateId, hidden) =>
-    setData((d) => updateTrip(d, trip.id, (t) => ({ ...t, hidden: { ...t.hidden, [templateId]: hidden || undefined } })))
-  const deleteExtra = (extraId) =>
-    setData((d) => updateTrip(d, trip.id, (t) => ({ ...t, extras: t.extras.filter((x) => x.id !== extraId) })))
+  const hide = (templateId, hidden) => setData((d) => setHidden(d, trip.id, templateId, hidden))
 
   // While coming home, those reminders matter most, so show them first.
   const order = comingHome
-    ? [CATEGORIES[3], ...CATEGORIES.slice(0, 3)]
+    ? [...CATEGORIES.filter((c) => c.id === 'home'), ...CATEGORIES.filter((c) => c.id !== 'home')]
     : CATEGORIES
 
   return (
@@ -79,7 +75,7 @@ export function TripScreen({ data, setData, go, today, tripId }) {
       <section className="trip-summary">
         <div className="trip-summary-row">
           <p className="muted">
-            {formatRange(trip)} · {nights === 0 ? 'day trip' : `${nights} night${nights > 1 ? 's' : ''}`} · {done} of {items.length} done
+            {formatRange(trip)} · {nightsLabel(trip)} · {done} of {items.length} done
           </p>
           <label className="hide-completed">
             <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
@@ -154,7 +150,7 @@ export function TripScreen({ data, setData, go, today, tripId }) {
               {catItems.length === 0
                 ? <p className="muted pad small">{cat.empty}</p>
                 : visibleCatItems.length === 0 && <p className="muted pad small">All {catDone} completed items are hidden.</p>}
-              <AddOneOff onAdd={(text) => addExtra(cat.id, text)} />
+              <AddOneOff onAdd={(text) => setData((d) => addExtra(d, trip.id, cat.id, text))} />
             </div>
           </section>
         )
@@ -167,7 +163,7 @@ export function TripScreen({ data, setData, go, today, tripId }) {
             {hiddenTemplates.map((t) => (
               <div className="list-row" key={t.id}>
                 <span className="muted">{t.text}</span>
-                <button className="link" onClick={() => setHidden(t.id, false)}>Restore</button>
+                <button className="link" onClick={() => hide(t.id, false)}>Restore</button>
               </div>
             ))}
           </div>
@@ -184,7 +180,7 @@ export function TripScreen({ data, setData, go, today, tripId }) {
             title: 'Delete trip?',
             message: `“${trip.name || 'Untitled trip'}” and its check marks will be deleted. Your master list isn't affected.`,
             confirmLabel: 'Delete',
-            onConfirm: () => { go({ name: 'trips' }); setData((d) => ({ ...d, trips: d.trips.filter((t) => t.id !== trip.id) })) },
+            onConfirm: () => { go({ name: 'trips' }); setData((d) => deleteTrip(d, trip.id)) },
           })}
         >
           Delete trip
@@ -196,7 +192,7 @@ export function TripScreen({ data, setData, go, today, tripId }) {
           <div className="sheet-menu">
             {menuItem.templateId ? (
               <>
-                <button className="btn wide" onClick={() => { setHidden(menuItem.templateId, true); setMenuItem(null) }}>
+                <button className="btn wide" onClick={() => { hide(menuItem.templateId, true); setMenuItem(null) }}>
                   Not needed this trip
                 </button>
                 <button className="btn wide" onClick={() => go({
@@ -207,10 +203,13 @@ export function TripScreen({ data, setData, go, today, tripId }) {
               </>
             ) : (
               <>
-                <button className="btn primary wide" onClick={() => { setPromoting({ item: menuItem, when: [], requires: null, group: 'Main', perDay: false }); setMenuItem(null) }}>
+                <button className="btn primary wide" onClick={() => {
+                  setPromoting({ extraId: menuItem.extraId, template: newTemplate(menuItem.category, { text: menuItem.text }) })
+                  setMenuItem(null)
+                }}>
                   Add to master list…
                 </button>
-                <button className="btn danger-text wide" onClick={() => { deleteExtra(menuItem.extraId); setMenuItem(null) }}>
+                <button className="btn danger-text wide" onClick={() => { setData((d) => removeExtra(d, trip.id, menuItem.extraId)); setMenuItem(null) }}>
                   Remove from this trip
                 </button>
               </>
@@ -220,41 +219,16 @@ export function TripScreen({ data, setData, go, today, tripId }) {
       )}
 
       {promoting && (
-        <Sheet title={`Add “${promoting.item.text}” to master list`} onClose={() => setPromoting(null)}>
-          <ConditionPicker
-            questions={data.questions}
-            value={promoting.when}
-            onChange={(when) => setPromoting((p) => ({ ...p, when }))}
-          />
-          <RequirePicker
-            questions={data.questions}
-            value={promoting.requires}
-            onChange={(requires) => setPromoting((p) => ({ ...p, requires }))}
-          />
-          {promoting.item.category === 'pack' && (
-            <>
-              <label className="field">
-                <span>Heading</span>
-                <select value={promoting.group} onChange={(e) => setPromoting((p) => ({ ...p, group: e.target.value }))}>
-                  {PACK_GROUPS.map((group) => <option key={group} value={group}>{group}</option>)}
-                </select>
-              </label>
-              <Toggle label="One per day" checked={promoting.perDay} onChange={(perDay) => setPromoting((p) => ({ ...p, perDay }))} />
-            </>
-          )}
-          <div className="sheet-actions">
-            <button className="btn" onClick={() => setPromoting(null)}>Cancel</button>
-            <button
-              className="btn primary"
-              onClick={() => {
-                setData((d) => makePermanent(d, trip.id, promoting.item.extraId, promoting.when, promoting.requires, promoting))
-                setPromoting(null)
-              }}
-            >
-              Add
-            </button>
-          </div>
-        </Sheet>
+        <TemplateSheet
+          data={data}
+          template={promoting.template}
+          title="Add to master list"
+          onSave={(template) => {
+            setData((d) => makePermanent(d, trip.id, promoting.extraId, template))
+            setPromoting(null)
+          }}
+          onClose={() => setPromoting(null)}
+        />
       )}
 
       {confirm && <ConfirmSheet {...confirm} onClose={() => setConfirm(null)} />}

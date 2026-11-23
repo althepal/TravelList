@@ -1,47 +1,12 @@
 import { useState } from 'react'
-import { ConditionPicker, ConfirmSheet, RequirePicker, Sheet, Toggle, TopBar } from '../components'
-import { CATEGORIES, PACK_GROUPS, conditionLabel, deleteQuestion, groupPackItems, questionDependencyCycle, newId } from '../model'
+import { ConditionPicker, ConfirmSheet, Sheet, TopBar } from '../components'
+import {
+  CATEGORIES, conditionLabel, deleteQuestion, deleteTemplate, groupPackItems, newQuestion, newTemplate,
+  questionDependencyCycle, saveQuestion, saveTemplate,
+} from '../model'
+import { TemplateSheet } from './TemplateSheet'
 
 const TABS = [...CATEGORIES, { id: 'questions', label: 'Questions' }]
-
-function TemplateSheet({ data, template, onSave, onDelete, onClose }) {
-  const [t, setT] = useState(template)
-  const set = (p) => setT((x) => ({ ...x, ...p }))
-  const isNew = !data.templates.some((x) => x.id === t.id)
-  return (
-    <Sheet title={isNew ? 'New item' : 'Edit item'} onClose={onClose}>
-      <form onSubmit={(e) => { e.preventDefault(); if (t.text.trim()) onSave({ ...t, text: t.text.trim() }) }}>
-        <label className="field">
-          <span>Item</span>
-          <input value={t.text} onChange={(e) => set({ text: e.target.value })} autoFocus={isNew} required />
-        </label>
-        <label className="field">
-          <span>Section</span>
-          <select value={t.category} onChange={(e) => set({ category: e.target.value })}>
-            {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-          </select>
-        </label>
-        <ConditionPicker questions={data.questions} value={t.when} onChange={(when) => set({ when })} />
-        <RequirePicker questions={data.questions} value={t.requires} onChange={(requires) => set({ requires })} />
-        {t.category === 'pack' && (
-          <label className="field">
-            <span>Heading</span>
-            <select value={t.group || 'Main'} onChange={(e) => set({ group: e.target.value })}>
-              {PACK_GROUPS.map((g) => <option key={g} value={g}>{g}</option>)}
-            </select>
-          </label>
-        )}
-        {t.category === 'pack' && (
-          <Toggle label="One per day" hint="Shows a count: nights + 1" checked={t.perDay} onChange={(perDay) => set({ perDay })} />
-        )}
-        <div className="sheet-actions">
-          {!isNew && <button type="button" className="btn danger-text" onClick={onDelete}>Delete</button>}
-          <button className="btn primary">Save</button>
-        </div>
-      </form>
-    </Sheet>
-  )
-}
 
 function QuestionSheet({ question, questions, isNew, onSave, onDelete, onClose }) {
   const [q, setQ] = useState(question)
@@ -72,7 +37,7 @@ function QuestionSheet({ question, questions, isNew, onSave, onDelete, onClose }
         </label>
         <ConditionPicker
           questions={questions.filter((x) => x.id !== q.id)}
-          value={[].concat(q.askIf ?? [])}
+          value={q.askIf}
           onChange={(askIf) => { setQ({ ...q, askIf }); setValidationError('') }}
           legend="Only ask when…"
           emptyText="Nothing selected: asked on every trip."
@@ -96,26 +61,14 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
   const [editingQ, setEditingQ] = useState(null)
   const [confirm, setConfirm] = useState(null)
 
-  const saveTemplate = (t) => {
-    setData((d) => ({
-      ...d,
-      masterEdited: true,
-      templates: d.templates.some((x) => x.id === t.id)
-        ? d.templates.map((x) => (x.id === t.id ? t : x))
-        : [...d.templates, t],
-    }))
+  const onSaveTemplate = (t) => {
+    setData((d) => saveTemplate(d, t))
     setTab(t.category)
     setSearch('')
     setEditing(null)
   }
-  const saveQuestion = (q) => {
-    setData((d) => ({
-      ...d,
-      masterEdited: true,
-      questions: d.questions.some((x) => x.id === q.id)
-        ? d.questions.map((x) => (x.id === q.id ? q : x))
-        : [...d.questions, q],
-    }))
+  const onSaveQuestion = (q) => {
+    setData((d) => saveQuestion(d, q))
     setSearch('')
     setEditingQ(null)
   }
@@ -164,9 +117,9 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
                 <button key={q.id} className="list-row" onClick={() => setEditingQ({ q, isNew: false })}>
                   <span>
                     {q.text}
-                    {[].concat(q.askIf ?? []).length > 0 && (
+                    {q.askIf.length > 0 && (
                       <small className="muted block">
-                        Only asked: {[].concat(q.askIf).map((c) => conditionLabel(c, data.questions)).join(' or ')}
+                        Only asked: {q.askIf.map((c) => conditionLabel(c, data.questions)).join(' or ')}
                       </small>
                     )}
                   </span>
@@ -176,7 +129,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
             })}
             {filteredQuestions.length === 0 && <p className="muted pad small">{query ? 'No matching questions.' : 'No questions yet.'}</p>}
           </div>
-          <button className="btn wide add-btn" onClick={() => setEditingQ({ q: { id: newId(), text: '', short: '' }, isNew: true })}>
+          <button className="btn wide add-btn" onClick={() => setEditingQ({ q: newQuestion(), isNew: true })}>
             + Add question
           </button>
         </section>
@@ -206,7 +159,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
           {filteredTemplates.length === 0 && <div className="card"><p className="muted pad small">{query ? 'No matching items.' : 'Nothing here yet.'}</p></div>}
           <button
             className="btn wide add-btn"
-            onClick={() => setEditing({ id: newId(), category: tab, text: '', when: [], requires: null, group: tab === 'pack' ? 'Main' : null, perDay: false })}
+            onClick={() => setEditing(newTemplate(tab))}
           >
             + Add item
           </button>
@@ -217,7 +170,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
         <TemplateSheet
           data={data}
           template={editing}
-          onSave={saveTemplate}
+          onSave={onSaveTemplate}
           onClose={() => setEditing(null)}
           onDelete={() => {
             const t = editing
@@ -226,7 +179,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
               title: 'Delete item?',
               message: `“${t.text}” will be removed from the master list and from every trip.`,
               confirmLabel: 'Delete',
-              onConfirm: () => setData((d) => ({ ...d, masterEdited: true, templates: d.templates.filter((x) => x.id !== t.id) })),
+              onConfirm: () => setData((d) => deleteTemplate(d, t.id)),
             })
           }}
         />
@@ -237,7 +190,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
           question={editingQ.q}
           questions={data.questions}
           isNew={editingQ.isNew}
-          onSave={saveQuestion}
+          onSave={onSaveQuestion}
           onClose={() => setEditingQ(null)}
           onDelete={() => {
             const q = editingQ.q

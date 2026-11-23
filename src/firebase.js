@@ -3,6 +3,8 @@ import { getAuth, GoogleAuthProvider, indexedDBLocalPersistence, initializeAuth,
 import { doc, getFirestore, onSnapshot, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore'
 import { Capacitor } from '@capacitor/core'
 import { GoogleSignIn } from '@capawesome/capacitor-google-sign-in'
+import { DATA_VERSION } from './model'
+import { DataError } from './parseData'
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -75,7 +77,10 @@ export async function ensureCloudData(user, localData, preferLocal = false) {
   const safeLocalData = JSON.parse(JSON.stringify(localData))
   return runTransaction(db, async (transaction) => {
     const snapshot = await transaction.get(ref)
-    if (snapshot.exists() && !preferLocal) return snapshot.data().payload
+    const cloud = snapshot.exists() ? snapshot.data().payload : null
+    // Never overwrite a copy a newer build wrote: this build can't read it.
+    if (cloud?.version > DATA_VERSION) throw new DataError('This list was saved by a newer version of TravelList.', 'newer')
+    if (cloud && !preferLocal) return cloud
     transaction.set(ref, { payload: safeLocalData, updatedAt: serverTimestamp() })
     return safeLocalData
   })

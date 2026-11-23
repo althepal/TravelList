@@ -3,8 +3,19 @@ import { Capacitor } from '@capacitor/core'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import { ConfirmSheet, TopBar } from '../components'
-import { backupValidationError, normalizeBackup } from '../backup'
+import { DataError, parseData } from '../parseData'
 import { isShareCancellation } from '../share'
+
+// Reads a chosen backup file, or throws an Error whose message is ready to show.
+export async function readBackupFile(file) {
+  try {
+    return parseData(JSON.parse(await file.text()), { imported: true })
+  } catch (e) {
+    if (e?.code === 'newer') throw new Error(`${e.message} Update the app to import this backup.`)
+    if (e instanceof DataError) throw e
+    throw new Error('That file could not be read as a TravelList JSON backup.')
+  }
+}
 
 function backupFilename() {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
@@ -68,25 +79,15 @@ export function DataBackupScreen({ data, setData, go }) {
     setError('')
     setStatus('')
     try {
-      const parsed = JSON.parse(await file.text())
-      const problem = backupValidationError(parsed)
-      if (problem) {
-        setCandidate(null)
-        setError(problem)
-        return
-      }
-      setCandidate({ data: parsed, filename: file.name })
-    } catch {
+      setCandidate({ data: await readBackupFile(file), filename: file.name })
+    } catch (e) {
       setCandidate(null)
-      setError('That file could not be read as a TravelList JSON backup.')
+      setError(e.message)
     }
   }
 
   const applyBackup = () => {
-    // An imported file is the user's chosen source of truth, including older
-    // backups that predate the masterEdited marker.
-    const imported = normalizeBackup(candidate.data)
-    setData(imported)
+    setData(candidate.data)
     setStatus(`Imported ${candidate.filename}. Your trips and checklist are now replaced by this backup.`)
     setCandidate(null)
     setConfirming(false)

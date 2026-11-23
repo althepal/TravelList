@@ -1,15 +1,22 @@
+// The .jsx extension lets Vite track hook changes during React Fast Refresh.
 import { useEffect, useRef, useState } from 'react'
 import { App as CapApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
-import { refreshStarterList } from './model'
+import { defaultData } from './model'
+import { parseData } from './parseData'
 import { loadSyncState, saveSyncState } from './storage'
-import { ensureCloudData, firebaseConfigured, listenForCloudData, observeAuth, saveCloudData, signOutAccount } from './firebase'
+import { ensureCloudData, firebaseConfigured, listenForCloudData, observeAuth, saveCloudData } from './firebase'
 
 const OFFLINE = 'Saved on this device'
-const failure = (e) => e?.message || 'Cloud sync is unavailable. Your device copy is safe.'
+const failure = (e) => {
+  if (e?.code === 'newer') return 'Your list was saved by a newer version of TravelList. Update the app to keep syncing.'
+  if (e?.name === 'DataError') return `The cloud copy couldn't be used: ${e.message} Your device copy is safe.`
+  return e?.message || 'Cloud sync is unavailable. Your device copy is safe.'
+}
 
-// Each device syncs with one Google account: the first one it syncs with (its
-// owner, kept in the sync state). Any other account is signed straight out.
+// Each device syncs with one Google account at a time (its owner, kept in the
+// sync state). Signing in with a different account drops this device's list
+// and uses that account's cloud copy, or the starter list if it has none.
 //
 // The one rule: when the list differs from the last copy read from or written
 // to the cloud, it needs uploading. The saved `dirty` flag remembers that
@@ -22,9 +29,10 @@ export function useCloudSync(data, setData) {
   const [cloudReady, setCloudReady] = useState(false)
   const [status, setStatus] = useState('Not connected')
   const [error, setError] = useState('')
-  const [accountMismatch, setAccountMismatch] = useState(null)
   const [attempt, setAttempt] = useState(0)
   const [saveCount, setSaveCount] = useState(0)
+  const [unsynced, setUnsynced] = useState(false)
+  const [ownerEmail, setOwnerEmail] = useState(null)
   const syncState = useRef({ uid: null, email: null, dirty: false })
   const dataRef = useRef(data)
   const cloudJson = useRef(null)
@@ -34,6 +42,8 @@ export function useCloudSync(data, setData) {
 
   const writeSyncState = (changes) => {
     syncState.current = { ...syncState.current, ...changes }
+    setUnsynced(syncState.current.dirty)
+    setOwnerEmail(syncState.current.email)
     saveSyncState(syncState.current).catch(() => {})
   }
   const setDirty = (dirty) => {
@@ -45,6 +55,8 @@ export function useCloudSync(data, setData) {
     loadSyncState()
       .then((state) => {
         syncState.current = state
+        setUnsynced(state.dirty)
+        setOwnerEmail(state.email)
         setStateLoaded(true)
       })
       .catch((e) => setError(`Couldn't read sync settings: ${e.message}`))
@@ -60,21 +72,18 @@ export function useCloudSync(data, setData) {
       setCloudReady(false)
       setError('')
       setStatus(nextUser ? 'Connecting…' : 'Not connected')
-      if (nextUser) setAccountMismatch(null)
     })
   }, [])
 
-  // Sign-in: refuse a different account, otherwise fetch (or upload) the list
-  // and start listening for changes from other devices.
+  // Sign-in: fetch (or upload) the list and start listening for changes from
+  // other devices.
   const hasData = data !== null
   useEffect(() => {
     if (!user || !hasData || !stateLoaded) return
-    const owner = syncState.current
-    if (owner.uid && owner.uid !== user.uid) {
-      setAccountMismatch(owner.email || 'another Google account')
-      signOutAccount().catch(() => {})
-      return
-    }
+    // A different account from the one this device last synced with: nothing
+    // on this device belongs to it, so start from its cloud copy, or from the
+    // starter list if it has none. Until that finishes, nothing is uploaded.
+    const switching = Boolean(syncState.current.uid) && syncState.current.uid !== user.uid
     let cancelled = false
     let stopListening
     setCloudReady(false)
@@ -83,7 +92,8 @@ export function useCloudSync(data, setData) {
     void (async () => {
       try {
         const startJson = JSON.stringify(dataRef.current)
-        const cloud = refreshStarterList(await ensureCloudData(user, dataRef.current, syncState.current.dirty))
+        const local = switching ? defaultData() : dataRef.current
+        const cloud = parseData(await ensureCloudData(user, local, !switching && syncState.current.dirty))
         if (cancelled) return
         const json = JSON.stringify(cloud)
         cloudJson.current = json
@@ -93,9 +103,19 @@ export function useCloudSync(data, setData) {
         if (json !== startJson) setData(cloud)
         setCloudReady(true)
         stopListening = listenForCloudData(user, (remote) => {
+          let next
+          try {
+            next = parseData(remote)
+          } catch (e) {
+            // Stop uploading: local changes must not overwrite a copy this
+            // build can't read. Retrying runs the sign-in check again.
+            setCloudReady(false)
+            setStatus(OFFLINE)
+            setError(failure(e))
+            return
+          }
           // Local changes not uploaded yet win; they'll overwrite the cloud.
           if (JSON.stringify(dataRef.current) !== cloudJson.current) return
-          const next = refreshStarterList(remote)
           const nextJson = JSON.stringify(next)
           cloudJson.current = nextJson
           setData((current) => JSON.stringify(current) === nextJson ? current : next)
@@ -170,8 +190,8 @@ export function useCloudSync(data, setData) {
     authLoading,
     syncStatus: status,
     syncError: error,
-    accountMismatch,
-    hasUnsyncedChanges: syncState.current.dirty,
+    hasUnsyncedChanges: unsynced,
+    ownerEmail,
     retry,
   }
 }
