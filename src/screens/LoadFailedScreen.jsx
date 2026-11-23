@@ -4,7 +4,7 @@ import { readBackupFile } from './DataBackupScreen'
 // Shown when the saved list can't be loaded. The rest of the app needs a list,
 // so restoring a backup is the way out from here. App keeps a copy of the
 // unreadable file before replacing it.
-export function LoadFailedScreen({ message, onRestore }) {
+export function LoadFailedScreen({ message, onRestore, user, authLoading }) {
   const fileInput = useRef(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -16,7 +16,11 @@ export function LoadFailedScreen({ message, onRestore }) {
     setError('')
     setBusy(true)
     try {
-      await onRestore(await readBackupFile(file))
+      const restored = await readBackupFile(file)
+      const account = user?.email || (user ? 'your signed-in account' : 'the next account you sign in to')
+      if (window.confirm(`Restore this backup on this device and replace the cloud list for ${account}?`)) {
+        await onRestore(restored)
+      }
     } catch (e) {
       setError(e.message)
     } finally {
@@ -35,7 +39,7 @@ export function LoadFailedScreen({ message, onRestore }) {
         </p>
       </section>
       <section>
-        <button className="btn primary wide" onClick={() => fileInput.current?.click()} disabled={busy}>
+        <button className="btn primary wide" onClick={() => fileInput.current?.click()} disabled={busy || authLoading}>
           {busy ? 'Restoring…' : 'Restore a backup'}
         </button>
         <input

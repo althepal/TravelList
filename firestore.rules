@@ -2,7 +2,26 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /users/{userId}/state/{documentId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      function ownsList() {
+        return request.auth != null && request.auth.uid == userId;
+      }
+
+      // Once a list uses transaction-based sync, an older app cannot replace
+      // the document with a snapshot that omits its revision.
+      function compatibleUpdate() {
+        return documentId != 'travelList' || !('syncRevision' in resource.data) ||
+          ('syncRevision' in request.resource.data && request.resource.data.syncRevision is int &&
+            request.resource.data.syncRevision == resource.data.syncRevision + 1);
+      }
+
+      function validRevision() {
+        return documentId != 'travelList' || !('syncRevision' in request.resource.data) ||
+          (request.resource.data.syncRevision is int && request.resource.data.syncRevision >= 1);
+      }
+
+      allow read, delete: if ownsList();
+      allow create: if ownsList() && validRevision();
+      allow update: if ownsList() && validRevision() && compatibleUpdate();
     }
   }
 }

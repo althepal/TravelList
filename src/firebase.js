@@ -1,10 +1,9 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, GoogleAuthProvider, indexedDBLocalPersistence, initializeAuth, onAuthStateChanged, signInWithCredential, signInWithPopup, signOut } from 'firebase/auth'
-import { doc, getFirestore, onSnapshot, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore'
+import { getFirestore } from 'firebase/firestore'
 import { Capacitor } from '@capacitor/core'
 import { GoogleSignIn } from '@capawesome/capacitor-google-sign-in'
-import { DATA_VERSION } from './model'
-import { DataError } from './parseData'
+import { createFirestoreSync } from './firestoreSync'
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -63,36 +62,4 @@ export async function signOutAccount() {
   }
 }
 
-function userDataDoc(user) {
-  return doc(db, 'users', user.uid, 'state', 'travelList')
-}
-
-// First sign-in seeds a new account from this device. Existing accounts win
-// when another device signs in, so the phone with the saved checklist should
-// be connected first.
-export async function ensureCloudData(user, localData, preferLocal = false) {
-  const ref = userDataDoc(user)
-  // JSON storage cannot represent undefined values. Match that behavior before
-  // sending data to Firestore, which rejects undefined fields by default.
-  const safeLocalData = JSON.parse(JSON.stringify(localData))
-  return runTransaction(db, async (transaction) => {
-    const snapshot = await transaction.get(ref)
-    const cloud = snapshot.exists() ? snapshot.data().payload : null
-    // Never overwrite a copy a newer build wrote: this build can't read it.
-    if (cloud?.version > DATA_VERSION) throw new DataError('This list was saved by a newer version of TravelList.', 'newer')
-    if (cloud && !preferLocal) return cloud
-    transaction.set(ref, { payload: safeLocalData, updatedAt: serverTimestamp() })
-    return safeLocalData
-  })
-}
-
-export function listenForCloudData(user, callback, onError) {
-  return onSnapshot(userDataDoc(user), { includeMetadataChanges: true }, (snapshot) => {
-    if (snapshot.exists() && !snapshot.metadata.hasPendingWrites) callback(snapshot.data().payload)
-  }, onError)
-}
-
-export async function saveCloudData(user, data) {
-  const safeData = JSON.parse(JSON.stringify(data))
-  await setDoc(userDataDoc(user), { payload: safeData, updatedAt: serverTimestamp() })
-}
+export const { ensureCloudData, listenForCloudData, saveCloudData } = createFirestoreSync(db)

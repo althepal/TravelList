@@ -1,178 +1,128 @@
-// The .jsx extension lets Vite track hook changes during React Fast Refresh.
 import { useEffect, useRef, useState } from 'react'
 import { App as CapApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { defaultData } from './model'
 import { parseData } from './parseData'
-import { loadSyncState, saveSyncState } from './storage'
+import { saveWorkspace } from './storage'
+import { acknowledgeBatch, acceptCloud, hasUnsyncedChanges, prepareBatch } from './syncState'
 import { ensureCloudData, firebaseConfigured, listenForCloudData, observeAuth, saveCloudData } from './firebase'
 
 const OFFLINE = 'Saved on this device'
-const failure = (e) => {
-  if (e?.code === 'newer') return 'Your list was saved by a newer version of TravelList. Update the app to keep syncing.'
-  if (e?.name === 'DataError') return `The cloud copy couldn't be used: ${e.message} Your device copy is safe.`
-  return e?.message || 'Cloud sync is unavailable. Your device copy is safe.'
+const RETRYABLE = new Set(['aborted', 'deadline-exceeded', 'unavailable'])
+
+function failure(error) {
+  if (error?.code === 'newer') return 'Your list was saved by a newer version of TravelList. Update the app to keep syncing.'
+  if (error?.name === 'DataError') return `The cloud copy couldn't be used: ${error.message} Your device copy is safe.`
+  return error?.message || 'Cloud sync is unavailable. Your device copy is safe.'
 }
 
-// Each device syncs with one Google account at a time (its owner, kept in the
-// sync state). Signing in with a different account drops this device's list
-// and uses that account's cloud copy, or the starter list if it has none.
-//
-// The one rule: when the list differs from the last copy read from or written
-// to the cloud, it needs uploading. The saved `dirty` flag remembers that
-// across launches and sign-outs, so the next sign-in uploads the device list
-// instead of replacing it with the cloud copy.
-export function useCloudSync(data, setData) {
+export function useCloudSync(workspace, workspaceRef, updateWorkspace) {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(firebaseConfigured)
-  const [stateLoaded, setStateLoaded] = useState(false)
-  const [cloudReady, setCloudReady] = useState(false)
+  const [connection, setConnection] = useState(null)
   const [status, setStatus] = useState('Not connected')
-  const [error, setError] = useState('')
+  const [error, setError] = useState(null)
   const [attempt, setAttempt] = useState(0)
-  const [saveCount, setSaveCount] = useState(0)
-  const [unsynced, setUnsynced] = useState(false)
-  const [ownerEmail, setOwnerEmail] = useState(null)
-  const syncState = useRef({ uid: null, email: null, dirty: false })
-  const dataRef = useRef(data)
-  const cloudJson = useRef(null)
-  const lastJson = useRef(null)
-  const session = useRef(0) // bumps on every sign-in/out so late saves are ignored
-  dataRef.current = data
+  const authUser = useRef(null)
+  const ready = Boolean(connection && connection.user === user && connection.attempt === attempt)
+  const loaded = Boolean(workspace)
+  const pending = workspace?.sync.pending
+  const unsynced = loaded && hasUnsyncedChanges(workspace)
 
-  const writeSyncState = (changes) => {
-    syncState.current = { ...syncState.current, ...changes }
-    setUnsynced(syncState.current.dirty)
-    setOwnerEmail(syncState.current.email)
-    saveSyncState(syncState.current).catch(() => {})
+  const retry = () => setAttempt((current) => current + 1)
+  const showError = (cause) => {
+    setStatus(OFFLINE)
+    setError(cause)
   }
-  const setDirty = (dirty) => {
-    if (syncState.current.dirty !== dirty) writeSyncState({ dirty })
-  }
-  const retry = () => setAttempt((n) => n + 1)
-
-  useEffect(() => {
-    loadSyncState()
-      .then((state) => {
-        syncState.current = state
-        setUnsynced(state.dirty)
-        setOwnerEmail(state.email)
-        setStateLoaded(true)
-      })
-      .catch((e) => setError(`Couldn't read sync settings: ${e.message}`))
-  }, [])
 
   useEffect(() => {
     if (!firebaseConfigured) return
     return observeAuth((nextUser) => {
-      session.current += 1
-      cloudJson.current = null
+      authUser.current = nextUser
       setUser(nextUser)
       setAuthLoading(false)
-      setCloudReady(false)
-      setError('')
+      setConnection(null)
+      setError(null)
       setStatus(nextUser ? 'Connecting…' : 'Not connected')
     })
   }, [])
 
-  // Sign-in: fetch (or upload) the list and start listening for changes from
-  // other devices.
-  const hasData = data !== null
   useEffect(() => {
-    if (!user || !hasData || !stateLoaded) return
-    // A different account from the one this device last synced with: nothing
-    // on this device belongs to it, so start from its cloud copy, or from the
-    // starter list if it has none. Until that finishes, nothing is uploaded.
-    const switching = Boolean(syncState.current.uid) && syncState.current.uid !== user.uid
-    let cancelled = false
-    let stopListening
-    setCloudReady(false)
-    setError('')
+    if (!user || !loaded) return
+    const started = workspaceRef.current
+    const switching = Boolean(started.sync.uid && started.sync.uid !== user.uid)
+    let active = true
+    setError(null)
     setStatus('Syncing…')
     void (async () => {
       try {
-        const startJson = JSON.stringify(dataRef.current)
-        const local = switching ? defaultData() : dataRef.current
-        const cloud = parseData(await ensureCloudData(user, local, !switching && syncState.current.dirty))
-        if (cancelled) return
-        const json = JSON.stringify(cloud)
-        cloudJson.current = json
-        writeSyncState({ uid: user.uid, email: user.email, dirty: false })
-        // Edits made during the sync are kept only if the cloud kept the
-        // starting list; the save effect then uploads them.
-        if (json !== startJson) setData(cloud)
-        setCloudReady(true)
-        stopListening = listenForCloudData(user, (remote) => {
-          let next
-          try {
-            next = parseData(remote)
-          } catch (e) {
-            // Stop uploading: local changes must not overwrite a copy this
-            // build can't read. Retrying runs the sign-in check again.
-            setCloudReady(false)
-            setStatus(OFFLINE)
-            setError(failure(e))
-            return
-          }
-          // Local changes not uploaded yet win; they'll overwrite the cloud.
-          if (JSON.stringify(dataRef.current) !== cloudJson.current) return
-          const nextJson = JSON.stringify(next)
-          cloudJson.current = nextJson
-          setData((current) => JSON.stringify(current) === nextJson ? current : next)
-          setStatus('Up to date')
-          setError('')
-        }, (e) => {
-          setStatus(OFFLINE)
-          setError(failure(e))
-        })
-      } catch (e) {
-        if (cancelled) return
-        setStatus(OFFLINE)
-        setError(failure(e))
+        const { data: cloud, restoreId } = await ensureCloudData(user, switching ? defaultData() : started.data)
+        if (!active || authUser.current !== user) return
+        await updateWorkspace((current) => acceptCloud(current, cloud, user, started.data, restoreId))
+        if (!active || authUser.current !== user) return
+        setConnection({ user, attempt })
+        setStatus(hasUnsyncedChanges(workspaceRef.current) ? 'Saving…' : 'Up to date')
+      } catch (cause) {
+        if (active && authUser.current === user) showError(cause)
       }
     })()
-    return () => {
-      cancelled = true
-      stopListening?.()
-    }
-  }, [user?.uid, hasData, stateLoaded, attempt])
+    return () => { active = false }
+  }, [user, loaded, attempt, updateWorkspace, workspaceRef])
 
-  // Every list change: mark it unsynced and, when connected, upload it.
-  // A finished upload bumps saveCount, which re-runs this to send the list
-  // again if it changed while that upload was in flight.
+  // Listen when there is no in-flight batch. Re-subscribing after an ack
+  // reads any server changes that arrived while the batch was being sent.
   useEffect(() => {
-    if (!data || !stateLoaded) return
-    const json = JSON.stringify(data)
-    const changed = lastJson.current !== null && lastJson.current !== json
-    lastJson.current = json
-    const connected = user && cloudReady
-    if (json === cloudJson.current) {
-      if (connected) {
-        setDirty(false)
-        setStatus('Up to date')
-        setError('')
+    if (!ready || pending) return
+    return listenForCloudData(user, ({ data: remote, restoreId }) => {
+      if (authUser.current !== user || workspaceRef.current.sync.pending) return
+      try {
+        const cloud = parseData(remote)
+        updateWorkspace((current) => acceptCloud(current, cloud, user, current.data, restoreId)).catch(showError)
+        setError(null)
+        setStatus(hasUnsyncedChanges(workspaceRef.current) ? 'Saving…' : 'Up to date')
+      } catch (cause) {
+        setConnection(null)
+        showError(cause)
       }
-      return
-    }
-    if (syncState.current.uid && (changed || connected)) setDirty(true)
-    if (!connected) return
+    }, showError)
+  }, [ready, pending, user, updateWorkspace, workspaceRef])
+
+  useEffect(() => {
+    if (!ready || !unsynced || pending) return
     setStatus('Saving…')
-    const mySession = session.current
     const timer = setTimeout(() => {
-      saveCloudData(user, data).then(() => {
-        if (session.current !== mySession) return
-        cloudJson.current = json
-        setSaveCount((n) => n + 1)
-      }, (e) => {
-        if (session.current !== mySession) return
-        setStatus(OFFLINE)
-        setError(failure(e))
-      })
+      if (authUser.current === user) void updateWorkspace(prepareBatch)
     }, 350)
     return () => clearTimeout(timer)
-  }, [data, stateLoaded, user?.uid, cloudReady, saveCount])
+  }, [ready, unsynced, pending, user, workspace, updateWorkspace])
 
-  // Try again when the connection or the app comes back.
+  useEffect(() => {
+    if (!ready || !pending) return
+    let active = true
+    const draft = workspaceRef.current
+    setStatus('Saving…')
+    setError(null)
+    void (async () => {
+      try {
+        // The batch ID and its baseline must survive a crash between the
+        // server commit and our acknowledgement.
+        await saveWorkspace(draft, false)
+        if (!active || authUser.current !== user) return
+        const { data: cloud, restoreId } = await saveCloudData(user, draft.sync)
+        if (!active || authUser.current !== user) return
+        await updateWorkspace((current) => acknowledgeBatch(current, pending, cloud, restoreId))
+        if (active && authUser.current === user) {
+          setStatus(hasUnsyncedChanges(workspaceRef.current) ? 'Saving…' : 'Up to date')
+        }
+      } catch (cause) {
+        if (active && authUser.current === user) showError(cause)
+      }
+    })()
+    return () => { active = false }
+  }, [ready, pending, user, updateWorkspace, workspaceRef])
+
+  // A retry reuses any recorded batch. A transaction receipt handles a
+  // previous request that committed before the connection dropped.
   useEffect(() => {
     if (!user) return
     window.addEventListener('online', retry)
@@ -181,17 +131,26 @@ export function useCloudSync(data, setData) {
       : null
     return () => {
       window.removeEventListener('online', retry)
-      sub?.then((s) => s.remove())
+      sub?.then((subscription) => subscription.remove())
     }
-  }, [user?.uid])
+  }, [user])
+
+  useEffect(() => {
+    if (!user || !RETRYABLE.has(error?.code) || !navigator.onLine) return
+    const timer = setTimeout(retry, 5000)
+    return () => clearTimeout(timer)
+  }, [user, error])
+
+  const useCloudCopy = () => {
+    updateWorkspace((current) => ({
+      ...current,
+      sync: { ...current.sync, base: null, legacyDirty: false },
+    })).then(retry, showError)
+  }
 
   return {
-    user,
-    authLoading,
-    syncStatus: status,
-    syncError: error,
-    hasUnsyncedChanges: unsynced,
-    ownerEmail,
-    retry,
+    user, authLoading, syncStatus: status, syncError: error ? failure(error) : '',
+    hasUnsyncedChanges: unsynced, ownerEmail: workspace?.sync.email,
+    retry, needsLegacyResolution: error?.code === 'legacy-dirty', useCloudCopy,
   }
 }

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { App as CapApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
-import { keepUnreadableData, loadData, saveData } from './storage'
+import { keepUnreadableData, loadWorkspace, saveWorkspace } from './storage'
+import { recoverWorkspace } from './syncState'
 import { syncReminders } from './reminders'
-import { todayStr } from './model'
+import { newId, todayStr } from './model'
 import { TripsScreen } from './screens/TripsScreen'
 import { TripScreen } from './screens/TripScreen'
 import { TripForm } from './screens/TripForm'
@@ -16,37 +17,79 @@ import { LoadFailedScreen } from './screens/LoadFailedScreen'
 import { useCloudSync } from './useCloudSync.jsx'
 
 export default function App() {
-  const [data, setData] = useState(null)
+  const [workspace, setWorkspace] = useState(null)
+  const workspaceRef = useRef(null)
+  const data = workspace?.data ?? null
   const [error, setError] = useState(null)
   const [loadError, setLoadError] = useState(null)
+  const [tabWaiting, setTabWaiting] = useState(false)
   // screen: trips | trip | tripForm | master | help | dataBackup | sync
   const [screen, setScreen] = useState({ name: 'trips' })
   const [notice, setNotice] = useState('')
   const [today, setToday] = useState(todayStr())
-  const loaded = useRef(false)
-
-  useEffect(() => {
-    loadData()
-      .then((d) => {
-        loaded.current = true
-        setData(d)
-      })
-      .catch((e) => setLoadError(e.message || String(e)))
+  const updateWorkspace = useCallback((update) => {
+    const previous = workspaceRef.current
+    const next = update(previous)
+    if (next === previous) return Promise.resolve()
+    workspaceRef.current = next
+    setWorkspace(next)
+    const saved = saveWorkspace(next, next.data !== previous?.data)
+    saved.catch((e) => setError(`Couldn't save: ${e.message}`))
+    return saved
   }, [])
 
+  const setData = (update) => updateWorkspace((current) => {
+    const updated = update(current.data)
+    return updated === current.data ? current : { ...current, data: updated }
+  })
+  const restoreBackup = (restored) => updateWorkspace((current) => ({
+    data: restored,
+    sync: { ...current.sync, replacement: current.sync.uid ? newId() : null },
+  }))
+
   useEffect(() => {
-    if (!loaded.current) return
-    // saveData queues its write right away (storage writes run in call order).
-    saveData(data).catch((e) => setError(`Couldn't save: ${e.message}`))
+    const controller = new AbortController()
+    const load = async () => {
+      try {
+        const loaded = await loadWorkspace()
+        if (!controller.signal.aborted) void updateWorkspace(() => loaded)
+      } catch (e) {
+        if (!controller.signal.aborted) setLoadError(e.message || String(e))
+      }
+    }
+    if (Capacitor.isNativePlatform() || !navigator.locks) {
+      void load()
+      return () => controller.abort()
+    }
+
+    // The browser's draft and pending batch live in one origin-wide file.
+    // Hold the writer lock until this tab closes, then load in the waiting tab.
+    let release
+    const hold = new Promise((resolve) => { release = resolve })
+    setTabWaiting(true)
+    navigator.locks.request('travellist-workspace', { signal: controller.signal }, async () => {
+      if (controller.signal.aborted) return
+      setTabWaiting(false)
+      await load()
+      await hold
+    }).catch((e) => {
+      if (!controller.signal.aborted) {
+        setTabWaiting(false)
+        setLoadError(e.message || String(e))
+      }
+    })
+    return () => { controller.abort(); release() }
+  }, [updateWorkspace])
+
+  useEffect(() => {
+    if (!data) return
     const timer = setTimeout(() => {
       syncReminders(data).catch((e) => setError(`Couldn't schedule reminders: ${e.message}`))
     }, 800)
     return () => clearTimeout(timer)
   }, [data])
 
-  // Called after the save effect above, so each list's write is queued before
-  // the unsynced marker the sync hook writes for it.
-  const sync = useCloudSync(data, setData)
+  const sync = useCloudSync(workspace, workspaceRef, updateWorkspace)
 
   // "Today" decides when Coming Home starts, so refresh it when the app returns.
   useEffect(() => {
@@ -91,16 +134,21 @@ export default function App() {
     } catch (e) {
       throw new Error(`Couldn't keep a copy of the list that failed to load, so nothing was replaced: ${e.message}`)
     }
-    loaded.current = true
+    const recovered = recoverWorkspace(restored, sync.user)
+    await saveWorkspace(recovered)
+    workspaceRef.current = recovered
+    setWorkspace(recovered)
     setLoadError(null)
-    setData(restored)
   }
 
   if (!data) {
+    if (tabWaiting) return (
+      <main className="app"><p className="pad">TravelList is open in another tab. Close it to continue here.</p></main>
+    )
     return (
       <div className="app">
         {loadError
-          ? <LoadFailedScreen message={loadError} onRestore={restoreAfterLoadFailure} />
+          ? <LoadFailedScreen message={loadError} onRestore={restoreAfterLoadFailure} user={sync.user} authLoading={sync.authLoading} />
           : <p className="muted pad">Loading…</p>}
       </div>
     )
@@ -122,7 +170,7 @@ export default function App() {
   } else if (screen.name === 'help') {
     body = <HelpScreen go={go} />
   } else if (screen.name === 'dataBackup') {
-    body = <DataBackupScreen {...props} />
+    body = <DataBackupScreen data={data} restoreBackup={restoreBackup} go={go} />
   } else if (screen.name === 'sync') {
     body = <SyncScreen go={go} onAuthenticated={finishGoogleSignIn} {...sync} />
   } else {

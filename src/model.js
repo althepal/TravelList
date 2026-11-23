@@ -26,7 +26,7 @@ export const AUTO_CONDITIONS = [
   { id: 'auto:long', text: 'More than 3 days' },
 ]
 
-function newId() {
+export function newId() {
   return globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)
 }
 

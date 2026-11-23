@@ -5,6 +5,7 @@ import {
   questionDependencyCycle, saveQuestion, saveTemplate,
 } from '../model'
 import { TemplateSheet } from './TemplateSheet'
+import { mergeFields, mergeTemplate } from '../mergeData'
 
 const TABS = [...CATEGORIES, { id: 'questions', label: 'Questions' }]
 
@@ -14,7 +15,10 @@ function QuestionSheet({ question, questions, isNew, onSave, onDelete, onClose }
   const submit = (event) => {
     event.preventDefault()
     if (!q.text.trim()) return
-    const saved = { ...q, text: q.text.trim(), short: (q.short || '').trim() || q.text.trim() }
+    const draft = { ...q, text: q.text.trim(), short: (q.short || '').trim() || q.text.trim() }
+    const current = questions.find((item) => item.id === draft.id)
+    if (!isNew && !current) return onClose()
+    const saved = isNew ? draft : mergeFields(question, draft, current)
     const nextQuestions = isNew ? [...questions, saved] : questions.map((item) => item.id === saved.id ? saved : item)
     const cycle = questionDependencyCycle(nextQuestions, saved.id)
     if (cycle) {
@@ -57,18 +61,22 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
   const requestedTemplate = data.templates.find((item) => item.id === itemId)
   const [tab, setTab] = useState(requestedTemplate?.category || 'pack')
   const [search, setSearch] = useState('')
-  const [editing, setEditing] = useState(requestedTemplate ?? null)
+  const [editing, setEditing] = useState(requestedTemplate ? { item: requestedTemplate, isNew: false } : null)
   const [editingQ, setEditingQ] = useState(null)
   const [confirm, setConfirm] = useState(null)
 
   const onSaveTemplate = (t) => {
-    setData((d) => saveTemplate(d, t))
+    setData((d) => {
+      if (editing.isNew) return saveTemplate(d, t)
+      const current = d.templates.find((item) => item.id === t.id)
+      return current ? saveTemplate(d, mergeTemplate(editing.item, t, current)) : d
+    })
     setTab(t.category)
     setSearch('')
     setEditing(null)
   }
   const onSaveQuestion = (q) => {
-    setData((d) => saveQuestion(d, q))
+    setData((d) => editingQ.isNew || d.questions.some((item) => item.id === q.id) ? saveQuestion(d, q) : d)
     setSearch('')
     setEditingQ(null)
   }
@@ -140,7 +148,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
               {group && <h3 className="group-title">{group}</h3>}
               <div className="card list">
                 {items.map((t) => (
-                  <button key={t.id} className="list-row template-row" onClick={() => setEditing(t)}>
+                  <button key={t.id} className="list-row template-row" onClick={() => setEditing({ item: t, isNew: false })}>
                     <span>
                       {t.text}
                       {t.perDay && <span className="qty">per day</span>}
@@ -159,7 +167,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
           {filteredTemplates.length === 0 && <div className="card"><p className="muted pad small">{query ? 'No matching items.' : 'Nothing here yet.'}</p></div>}
           <button
             className="btn wide add-btn"
-            onClick={() => setEditing(newTemplate(tab))}
+            onClick={() => setEditing({ item: newTemplate(tab), isNew: true })}
           >
             + Add item
           </button>
@@ -169,11 +177,11 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
       {editing && (
         <TemplateSheet
           data={data}
-          template={editing}
+          template={editing.item}
           onSave={onSaveTemplate}
           onClose={() => setEditing(null)}
           onDelete={() => {
-            const t = editing
+            const t = editing.item
             setEditing(null)
             setConfirm({
               title: 'Delete item?',

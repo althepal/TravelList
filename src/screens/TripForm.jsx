@@ -1,18 +1,21 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { TopBar } from '../components'
-import { newTrip, nightsLabel, nightsOf, saveTrip, tripConditions } from '../model'
+import { newTrip, nightsLabel, nightsOf, saveTrip, tripConditions, updateTrip } from '../model'
+import { mergeTrip } from '../mergeData'
 
 export function TripForm({ data, setData, go, today, tripId }) {
   const existing = data.trips.find((t) => t.id === tripId)
-  const [trip, setTrip] = useState(() => {
-    const initial = existing ?? newTrip(today)
-    return {
-      ...initial,
-      answers: Object.fromEntries(data.questions.map((q) => [q.id, initial.answers[q.id] ?? false])),
-    }
-  })
+  const [initial] = useState(() => existing ?? newTrip(today))
+  const [trip, setTrip] = useState(() => ({
+    ...initial,
+    answers: Object.fromEntries(data.questions.map((q) => [q.id, initial.answers[q.id] ?? false])),
+  }))
+  const answered = useRef(new Set())
   const set = (patch) => setTrip((t) => ({ ...t, ...patch }))
-  const setAnswer = (qid, v) => setTrip((t) => ({ ...t, answers: { ...t.answers, [qid]: v } }))
+  const setAnswer = (qid, v) => {
+    answered.current.add(qid)
+    setTrip((t) => ({ ...t, answers: { ...t.answers, [qid]: v } }))
+  }
 
   const datesValid = trip.start && trip.end && trip.end >= trip.start
   // Every question needs an explicit answer: a missed "Bringing Max?" shouldn't silently mean no.
@@ -28,7 +31,13 @@ export function TripForm({ data, setData, go, today, tripId }) {
     e.preventDefault()
     if (!ready) return
     const saved = { ...trip, name: trip.name.trim() }
-    setData((d) => saveTrip(d, saved))
+    setData((d) => tripId ? updateTrip(d, tripId, (current) => {
+      // A default answer was never selected, so keep a newer cloud answer.
+      const defaults = d.questions.filter(({ id }) => !Object.hasOwn(initial.answers, id) &&
+        !answered.current.has(id) && Object.hasOwn(current.answers, id))
+      const before = { ...initial, answers: { ...initial.answers, ...Object.fromEntries(defaults.map(({ id }) => [id, saved.answers[id]])) } }
+      return mergeTrip(before, saved, current)
+    }) : saveTrip(d, saved))
     go({ name: 'trip', id: saved.id })
   }
 

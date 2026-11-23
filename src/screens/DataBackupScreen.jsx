@@ -22,7 +22,7 @@ function backupFilename() {
   return `travellist-backup-${stamp}.json`
 }
 
-export function DataBackupScreen({ data, setData, go }) {
+export function DataBackupScreen({ data, restoreBackup, go }) {
   const fileInput = useRef(null)
   const [candidate, setCandidate] = useState(null)
   const [error, setError] = useState('')
@@ -87,7 +87,7 @@ export function DataBackupScreen({ data, setData, go }) {
   }
 
   const applyBackup = () => {
-    setData(candidate.data)
+    restoreBackup(candidate.data)
     setStatus(`Imported ${candidate.filename}. Your trips and checklist are now replaced by this backup.`)
     setCandidate(null)
     setConfirming(false)

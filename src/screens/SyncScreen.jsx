@@ -12,7 +12,7 @@ function errorText(error) {
   return error?.message || 'Could not connect. Check your connection and Firebase setup.'
 }
 
-export function SyncScreen({ go, onAuthenticated, user, authLoading, syncStatus, syncError, ownerEmail, hasUnsyncedChanges, retry }) {
+export function SyncScreen({ go, onAuthenticated, user, authLoading, syncStatus, syncError, ownerEmail, hasUnsyncedChanges, retry, needsLegacyResolution, useCloudCopy }) {
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
 
@@ -56,6 +56,14 @@ export function SyncScreen({ go, onAuthenticated, user, authLoading, syncStatus,
               <p>{user.email ? <>Signed in as <strong>{user.email}</strong></> : 'Signed in with Google'}</p>
               <p className="muted small">{syncError || syncStatus}</p>
               {hasUnsyncedChanges && <p className="muted small">Changes not yet in the cloud are saved on this device.</p>}
+              {needsLegacyResolution ? (
+                <>
+                  <button className="btn" onClick={() => go({ name: 'dataBackup' })}>Export a backup</button>
+                  <button className="btn" onClick={() => {
+                    if (window.confirm('Replace this device’s list with the cloud copy?')) useCloudCopy()
+                  }}>Use cloud copy</button>
+                </>
+              ) : null}
               {syncError && <button className="btn" onClick={retry}>Try syncing again</button>}
               <button className="btn" onClick={logout} disabled={busy}>{busy ? 'Signing out…' : 'Sign out'}</button>
             </div>

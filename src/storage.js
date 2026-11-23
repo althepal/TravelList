@@ -1,13 +1,14 @@
 import { Capacitor } from '@capacitor/core'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 import { comingHomeSnapshot, defaultData } from './model'
-import { parseData } from './parseData'
+import { DataError, parseData } from './parseData'
+import { newWorkspace } from './syncState'
 
 // On the phone, data lives in the app's Documents folder: it's included in
 // iCloud device backups and visible in the Files app (On My iPhone ›
 // TravelList). In a desktop browser (development) it falls back to localStorage.
 const DATA_FILE = 'travellist.json'
-const SYNC_STATE_FILE = 'travellist-sync.json'
+const LEGACY_SYNC_STATE_FILE = 'travellist-sync.json'
 // Read by the native Shortcuts action (ios/App/App/ComingHomeIntent.swift).
 const COMING_HOME_FILE = 'coming-home.json'
 
@@ -26,9 +27,7 @@ async function readText(path) {
   }
 }
 
-// Writes run one at a time in the order they're called, so the list is always
-// on disk before anything written after it (like the sync state's unsynced
-// marker), and the newest list is always written last.
+// Writes run in call order so the newest list is always written last.
 let writes = Promise.resolve()
 
 function enqueue(task) {
@@ -42,9 +41,24 @@ function writeFile(path, text) {
   return Filesystem.writeFile({ path, data: text, directory: Directory.Documents, encoding: Encoding.UTF8 })
 }
 
-export async function loadData() {
+export async function loadWorkspace() {
   const text = await readText(DATA_FILE)
-  return text ? parseData(JSON.parse(text)) : defaultData()
+  const raw = text ? JSON.parse(text) : null
+  const data = text ? parseData(raw) : defaultData()
+  if (!raw || !Object.hasOwn(raw, '_sync')) return newWorkspace(data, await loadLegacySync())
+
+  const sync = raw._sync
+  if (!sync || typeof sync.clientId !== 'string' || (sync.pending && (!sync.uid || !sync.base || typeof sync.pending.id !== 'string'))) {
+    throw new DataError('The saved sync settings are damaged.')
+  }
+  return {
+    data,
+    sync: {
+      ...sync,
+      base: sync.base ? parseData(sync.base) : null,
+      pending: sync.pending ? { ...sync.pending, data: parseData(sync.pending.data) } : null,
+    },
+  }
 }
 
 // Before a list the app couldn't read is replaced, keep it beside the main file
@@ -59,32 +73,22 @@ export function keepUnreadableData(now = new Date()) {
   })
 }
 
-// One queued step, so each list and its Shortcuts snapshot are written together.
-export function saveData(data) {
+// Saving the draft and sync checkpoint in one file keeps a restart from pairing
+// one list with another list's checkpoint. Backups still export data alone.
+export function saveWorkspace({ data, sync }, updateReminders = true) {
   return enqueue(async () => {
-    await writeFile(DATA_FILE, JSON.stringify(data, null, 2))
-    await writeFile(COMING_HOME_FILE, JSON.stringify(comingHomeSnapshot(data)))
+    await writeFile(DATA_FILE, JSON.stringify({ ...data, _sync: sync }))
+    if (updateReminders) await writeFile(COMING_HOME_FILE, JSON.stringify(comingHomeSnapshot(data)))
   })
 }
 
-// Which account this device syncs with, and whether it has changes the cloud
-// hasn't seen yet.
-export async function loadSyncState() {
-  const empty = { uid: null, email: null, dirty: false }
-  const text = await readText(SYNC_STATE_FILE)
-  if (!text) return empty
+async function loadLegacySync() {
+  const text = await readText(LEGACY_SYNC_STATE_FILE)
+  if (!text) return {}
   try {
     const { uid, email, dirty } = JSON.parse(text)
     return { uid: uid ?? null, email: email ?? null, dirty: Boolean(dirty) }
   } catch {
-    return empty
+    return {}
   }
-}
-
-// Known, accepted risk: if a list write fails (e.g. the phone is out of
-// space) the unsynced marker written after it still lands, so the next
-// sign-in could upload the older on-disk list. Rare, and the app already
-// shows a save error when it happens.
-export function saveSyncState({ uid, email, dirty }) {
-  return enqueue(() => writeFile(SYNC_STATE_FILE, JSON.stringify({ uid, email, dirty })))
 }

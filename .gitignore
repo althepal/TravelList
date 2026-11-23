@@ -3,6 +3,8 @@ dist
 .env.local
 .env.*.local
 .DS_Store
+firebase-debug.log*
+firestore-debug.log*
 ios/App/App/public
 ios/App/App/capacitor.config.json
 ios/App/App/config.xml
