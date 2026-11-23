@@ -68,7 +68,7 @@ function userDataDoc(user) {
 // First sign-in seeds a new account from this device. Existing accounts win
 // when another device signs in, so the phone with the saved checklist should
 // be connected first.
-export async function ensureCloudData(user, localData, preferLocal = false, allowSeed = true) {
+export async function ensureCloudData(user, localData, preferLocal = false) {
   const ref = userDataDoc(user)
   // JSON storage cannot represent undefined values. Match that behavior before
   // sending data to Firestore, which rejects undefined fields by default.
@@ -76,7 +76,6 @@ export async function ensureCloudData(user, localData, preferLocal = false, allo
   return runTransaction(db, async (transaction) => {
     const snapshot = await transaction.get(ref)
     if (snapshot.exists() && !preferLocal) return snapshot.data().payload
-    if (!snapshot.exists() && !allowSeed) return null
     transaction.set(ref, { payload: safeLocalData, updatedAt: serverTimestamp() })
     return safeLocalData
   })

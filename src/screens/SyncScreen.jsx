@@ -12,7 +12,7 @@ function errorText(error) {
   return error?.message || 'Could not connect. Check your connection and Firebase setup.'
 }
 
-export function SyncScreen({ go, user, authLoading, syncStatus, syncError, hasUnsyncedChanges, onRetry }) {
+export function SyncScreen({ go, user, authLoading, syncStatus, syncError, accountMismatch, hasUnsyncedChanges, retry }) {
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
 
@@ -29,7 +29,7 @@ export function SyncScreen({ go, user, authLoading, syncStatus, syncError, hasUn
   }
 
   const logout = async () => {
-    if (hasUnsyncedChanges && !window.confirm('Some changes have not reached the cloud yet. They will stay saved on this device for this Google account. Sign out anyway?')) return
+    if (hasUnsyncedChanges && !window.confirm("Some changes haven't reached the cloud yet. They'll upload when you sign back in with this account. Sign out anyway?")) return
     setBusy(true)
     setFormError('')
     try {
@@ -54,8 +54,8 @@ export function SyncScreen({ go, user, authLoading, syncStatus, syncError, hasUn
             <div className="card form-card">
               <p>Signed in as <strong>{user.email}</strong></p>
               <p className="muted small">{syncError || syncStatus}</p>
-              {hasUnsyncedChanges && <p className="muted small">Your unsynced changes are saved on this device for this Google account.</p>}
-              {syncError && <button className="btn" onClick={onRetry}>Try syncing again</button>}
+              {hasUnsyncedChanges && <p className="muted small">Changes not yet in the cloud are saved on this device.</p>}
+              {syncError && <button className="btn" onClick={retry}>Try syncing again</button>}
               <button className="btn" onClick={logout} disabled={busy}>{busy ? 'Signing out…' : 'Sign out'}</button>
             </div>
             <p>Your checklist stays saved on this device and syncs to your private account when connected.</p>
@@ -65,6 +65,7 @@ export function SyncScreen({ go, user, authLoading, syncStatus, syncError, hasUn
             <p>Sign in with the same Google account on your iPhone and website to use one shared checklist.</p>
             <p><strong>Connect the iPhone with your existing checklist first.</strong> If this account already has cloud data, it will replace the local list on this device.</p>
             <div className="card form-card">
+              {accountMismatch && <p className="error-text" role="alert">This device syncs with {accountMismatch}. Sign in with that account.</p>}
               {formError && <p className="error-text" role="alert">{formError}</p>}
               <button type="button" className="btn primary" onClick={authenticate} disabled={busy}>
                 {busy ? 'Opening Google…' : 'Continue with Google'}

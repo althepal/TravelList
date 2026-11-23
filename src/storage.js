@@ -7,7 +7,6 @@ import { comingHomeSnapshot, defaultData, refreshStarterList } from './model'
 // TravelList). In a desktop browser (development) it falls back to localStorage.
 const DATA_FILE = 'travellist.json'
 const SYNC_STATE_FILE = 'travellist-sync.json'
-const ACCOUNT_DATA_PREFIX = 'travellist-account-'
 // Read by the native Shortcuts action (ios/App/App/ComingHomeIntent.swift).
 const COMING_HOME_FILE = 'coming-home.json'
 
@@ -26,9 +25,20 @@ async function readText(path) {
   }
 }
 
-async function writeText(path, text) {
+// Writes run one at a time in the order they're called, so the list is always
+// on disk before anything written after it (like the sync state's unsynced
+// marker), and the newest list is always written last.
+let writes = Promise.resolve()
+
+function enqueue(task) {
+  const run = writes.then(task)
+  writes = run.catch(() => {}) // a failed write doesn't block later ones
+  return run
+}
+
+function writeFile(path, text) {
   if (!native) return localStorage.setItem(path, text)
-  await Filesystem.writeFile({ path, data: text, directory: Directory.Documents, encoding: Encoding.UTF8 })
+  return Filesystem.writeFile({ path, data: text, directory: Directory.Documents, encoding: Encoding.UTF8 })
 }
 
 export async function loadData() {
@@ -36,39 +46,32 @@ export async function loadData() {
   return text ? refreshStarterList(JSON.parse(text)) : defaultData()
 }
 
-export async function saveData(data) {
-  await writeText(DATA_FILE, JSON.stringify(data, null, 2))
-  await writeText(COMING_HOME_FILE, JSON.stringify(comingHomeSnapshot(data)))
+// One queued step, so each list and its Shortcuts snapshot are written together.
+export function saveData(data) {
+  return enqueue(async () => {
+    await writeFile(DATA_FILE, JSON.stringify(data, null, 2))
+    await writeFile(COMING_HOME_FILE, JSON.stringify(comingHomeSnapshot(data)))
+  })
 }
 
+// Which account this device syncs with, and whether it has changes the cloud
+// hasn't seen yet.
 export async function loadSyncState() {
+  const empty = { uid: null, email: null, dirty: false }
   const text = await readText(SYNC_STATE_FILE)
-  if (!text) return { dirty: false, uid: null }
+  if (!text) return empty
   try {
-    const state = JSON.parse(text)
-    return { dirty: Boolean(state.dirty), uid: state.uid ?? null }
+    const { uid, email, dirty } = JSON.parse(text)
+    return { uid: uid ?? null, email: email ?? null, dirty: Boolean(dirty) }
   } catch {
-    return { dirty: false, uid: null }
+    return empty
   }
 }
 
-export async function saveSyncState(state) {
-  await writeText(SYNC_STATE_FILE, JSON.stringify({ dirty: Boolean(state.dirty), uid: state.uid ?? null }))
-}
-
-export async function loadAccountData(uid) {
-  if (!uid) return null
-  const text = await readText(`${ACCOUNT_DATA_PREFIX}${encodeURIComponent(uid)}.json`)
-  if (!text) return null
-  try {
-    const saved = JSON.parse(text)
-    return { data: refreshStarterList(saved.data), dirty: Boolean(saved.dirty) }
-  } catch {
-    return null
-  }
-}
-
-export async function saveAccountData(uid, data, dirty) {
-  if (!uid) return
-  await writeText(`${ACCOUNT_DATA_PREFIX}${encodeURIComponent(uid)}.json`, JSON.stringify({ data, dirty: Boolean(dirty) }))
+// Known, accepted risk: if a list write fails (e.g. the phone is out of
+// space) the unsynced marker written after it still lands, so the next
+// sign-in could upload the older on-disk list. Rare, and the app already
+// shows a save error when it happens.
+export function saveSyncState({ uid, email, dirty }) {
+  return enqueue(() => writeFile(SYNC_STATE_FILE, JSON.stringify({ uid, email, dirty })))
 }

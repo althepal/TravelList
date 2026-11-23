@@ -9,7 +9,7 @@ vi.mock('@capacitor/filesystem', () => ({
 
 import { Filesystem } from '@capacitor/filesystem'
 import { defaultData } from './model'
-import { loadData } from './storage'
+import { loadData, saveData, saveSyncState } from './storage'
 
 describe('loadData', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -24,5 +24,21 @@ describe('loadData', () => {
     Filesystem.readFile.mockRejectedValue(error)
     await expect(loadData()).rejects.toBe(error)
     expect(Filesystem.writeFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('writes', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('finish the list before the sync marker written after it, even when the list write is slow', async () => {
+    const order = []
+    Filesystem.writeFile.mockImplementation(async ({ path }) => {
+      if (path === 'travellist.json') await new Promise((resolve) => setTimeout(resolve, 20))
+      order.push(path)
+    })
+    const listSaved = saveData(defaultData())
+    await saveSyncState({ uid: 'u1', email: null, dirty: true })
+    await listSaved
+    expect(order.indexOf('travellist.json')).toBeLessThan(order.indexOf('travellist-sync.json'))
   })
 })
