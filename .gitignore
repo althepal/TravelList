@@ -1,5 +1,7 @@
 node_modules
 dist
+.env.local
+.env.*.local
 .DS_Store
 ios/App/App/public
 ios/App/App/capacitor.config.json

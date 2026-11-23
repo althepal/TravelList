@@ -18,4 +18,14 @@ npm run test:ios-rules # Swift reminder cutoff checks
 npm run ios      # build, sync, open Xcode → pick your phone, Run
 ```
 
+## Website hosting
+
+The GitHub Actions workflow builds the static web app and publishes it to GitHub Pages when changes are pushed to `main`. In the repository settings, set **Pages → Build and deployment → Source** to **GitHub Actions**. The expected site URL is `https://althepal.github.io/TravelList/`.
+
+## Cloud sync
+
+Cloud sync uses Google sign-in and Cloud Firestore. For local builds, `.env.local` contains the Firebase web app config and Google web client ID and is ignored by Git. For GitHub Pages builds, add repository variables named `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID`, and `GOOGLE_WEB_CLIENT_ID` under **Settings → Secrets and variables → Actions → Variables**.
+
+In the Firebase Console, enable Google under **Authentication → Sign-in method**, add the website domain under **Authentication → Settings → Authorized domains**, create a Cloud Firestore database, and publish the rules in `firestore.rules` under **Firestore Database → Rules**. The app stores one private state document per Firebase user. Sign in on the iPhone first to seed the cloud with its existing checklist; signing in on another device downloads the existing cloud copy. The app keeps a local copy for offline use. Analytics is not initialized by the app.
+
 To install on your iPhone, select your team under *Signing & Capabilities* in Xcode the first time.

@@ -60,6 +60,9 @@ export function TripsScreen({ data, go, today }) {
           <button className="list-row" onClick={() => go({ name: 'dataBackup' })}>
             <span>Data & backup</span><span className="muted">Import or export ›</span>
           </button>
+          <button className="list-row" onClick={() => go({ name: 'sync' })}>
+            <span>Sync between devices</span><span className="muted">Account ›</span>
+          </button>
           {Capacitor.isNativePlatform() && (
             <button className="list-row" onClick={() => go({ name: 'help' })}>
               <span>Car reminders setup</span><span className="muted">›</span>
