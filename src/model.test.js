@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   comingHomeSnapshot, defaultData, deleteQuestion, groupPackItems, isAsked, isComingHome, makePermanent,
-  nightsOf, refreshStarterList, toggleChecked, tripItems,
+  nightsOf, questionDependencyCycle, refreshStarterList, toggleChecked, tripItems,
 } from './model'
 import { plannedReminders } from './reminders'
 
@@ -77,6 +77,13 @@ describe('tripItems', () => {
     expect(isAsked(swim, setup({ answers: { fly: true } }).trips[0], q)).toBe(true)
   })
 
+  it('treats a trip that overlaps May as summer', () => {
+    const questions = defaultData().questions
+    const trip = { ...setup().trips[0], start: '2026-04-28', end: '2026-05-02' }
+    expect(isAsked(questions.find((q) => q.id === 'swim'), trip, questions)).toBe(true)
+    expect(texts(setup({ start: trip.start, end: trip.end }))).toContain('Set Chiller (Fish)')
+  })
+
   it('bathing suits come with swimming, when Swimming is asked', () => {
     expect(texts(setup({ ...summer, answers: { swim: true } }))).toContain('Bathing suit')
     expect(texts(setup({ answers: { swim: true, fly: true } }))).toContain('Bathing suit')
@@ -105,6 +112,12 @@ describe('makePermanent', () => {
     data = { ...data, trips: [{ ...data.trips[0], answers: { max: true } }] }
     expect(tripItems(data, data.trips[0]).find((i) => i.text === 'Ski boots').checked).toBe(true)
   })
+
+  it('keeps Pack heading and per-day options when promoting an item', () => {
+    const data = setup({ extras: [{ id: 'x2', category: 'pack', text: 'Trip-only boots' }] })
+    const promoted = makePermanent(data, 'T', 'x2', [], null, { group: 'Max', perDay: true })
+    expect(promoted.templates.find((item) => item.text === 'Trip-only boots')).toMatchObject({ group: 'Max', perDay: true })
+  })
 })
 
 describe('deleteQuestion', () => {
@@ -129,7 +142,8 @@ describe('coming home', () => {
   it('snapshot lists unchecked coming-home items for open trips', () => {
     let data = setup()
     expect(comingHomeSnapshot(data).trips[0]).toMatchObject({
-      end: '2026-12-04', items: ['Turn the HVAC back on', 'Turn the recirc pump back on'],
+      end: '2026-12-04', remindUntil: '2026-12-07',
+      items: ['Turn the HVAC back on', 'Turn the recirc pump back on'],
     })
     data = toggleChecked(data, 'T', `t:${idOf(data, 'Turn the HVAC back on')}`)
     expect(comingHomeSnapshot(data).trips[0].items).toEqual(['Turn the recirc pump back on'])
@@ -162,5 +176,36 @@ describe('starter list', () => {
     expect(refreshStarterList(old).trips).toEqual(old.trips)
     const edited = { ...old, masterEdited: true }
     expect(refreshStarterList(edited)).toBe(edited)
+  })
+})
+
+describe('questionDependencyCycle', () => {
+  const q = (id, askIf) => ({ id, text: `${id}?`, short: id, askIf })
+  const loop = [q('a', ['b']), q('b', ['a', 'auto:summer']), q('c')]
+
+  it('finds a loop and ignores self-dependencies and auto conditions', () => {
+    expect(questionDependencyCycle(loop)).toEqual(['a', 'b', 'a'])
+    expect(questionDependencyCycle([q('a', ['a', 'auto:winter']), q('b', 'a')])).toBeNull()
+    expect(questionDependencyCycle(defaultData().questions)).toBeNull()
+  })
+
+  it('with a start question, reports only loops through it', () => {
+    expect(questionDependencyCycle(loop, 'a')).toEqual(['a', 'b', 'a'])
+    expect(questionDependencyCycle(loop, 'c')).toBeNull()
+    expect(questionDependencyCycle([...loop.slice(0, 2), q('c', ['a'])], 'c')).toBeNull()
+    expect(questionDependencyCycle([q('a', ['c']), q('b', ['a']), q('c', ['b'])], 'c')).toEqual(['c', 'b', 'a', 'c'])
+  })
+
+  it('stays fast when many questions share follow-ups', () => {
+    const dense = Array.from({ length: 200 }, (_, i) => q(`q${i}`, Array.from({ length: i }, (_, j) => `q${j}`)))
+    const started = Date.now()
+    expect(questionDependencyCycle(dense)).toBeNull()
+    expect(questionDependencyCycle(dense, 'q199')).toBeNull()
+    expect(Date.now() - started).toBeLessThan(500)
+  })
+
+  it('keeps a looped question from hanging the trip checklist', () => {
+    const data = { ...setup({ answers: { a: true, b: true } }), questions: loop }
+    expect(isAsked(loop[0], data.trips[0], loop)).toBe(false) // December: b's summer condition is off
   })
 })

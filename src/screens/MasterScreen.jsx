@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ConditionPicker, ConfirmSheet, RequirePicker, Sheet, Toggle, TopBar } from '../components'
-import { CATEGORIES, PACK_GROUPS, conditionLabel, deleteQuestion, groupPackItems, newId } from '../model'
+import { CATEGORIES, PACK_GROUPS, conditionLabel, deleteQuestion, groupPackItems, questionDependencyCycle, newId } from '../model'
 
 const TABS = [...CATEGORIES, { id: 'questions', label: 'Questions' }]
 
@@ -45,25 +45,40 @@ function TemplateSheet({ data, template, onSave, onDelete, onClose }) {
 
 function QuestionSheet({ question, questions, isNew, onSave, onDelete, onClose }) {
   const [q, setQ] = useState(question)
+  const [validationError, setValidationError] = useState('')
+  const submit = (event) => {
+    event.preventDefault()
+    if (!q.text.trim()) return
+    const saved = { ...q, text: q.text.trim(), short: (q.short || '').trim() || q.text.trim() }
+    const nextQuestions = isNew ? [...questions, saved] : questions.map((item) => item.id === saved.id ? saved : item)
+    const cycle = questionDependencyCycle(nextQuestions, saved.id)
+    if (cycle) {
+      const names = cycle.map((id) => nextQuestions.find((item) => item.id === id)?.text || 'Unnamed question')
+      setValidationError(`These questions depend on each other in a loop: ${names.join(' → ')}. Change their follow-up conditions before saving.`)
+      return
+    }
+    onSave(saved)
+  }
   return (
     <Sheet title={isNew ? 'New question' : 'Edit question'} onClose={onClose}>
-      <form onSubmit={(e) => { e.preventDefault(); if (q.text.trim()) onSave({ ...q, text: q.text.trim(), short: q.short.trim() || q.text.trim() }) }}>
+      <form onSubmit={submit}>
         <label className="field">
           <span>Question (yes / no)</span>
           <input value={q.text} onChange={(e) => setQ({ ...q, text: e.target.value })} placeholder="Going skiing?" autoFocus={isNew} required />
         </label>
         <label className="field">
           <span>Short label</span>
-          <input value={q.short} onChange={(e) => setQ({ ...q, short: e.target.value })} placeholder="Skiing" />
+          <input value={q.short ?? ''} onChange={(e) => setQ({ ...q, short: e.target.value })} placeholder="Skiing" />
         </label>
         <ConditionPicker
           questions={questions.filter((x) => x.id !== q.id)}
           value={[].concat(q.askIf ?? [])}
-          onChange={(askIf) => setQ({ ...q, askIf })}
+          onChange={(askIf) => { setQ({ ...q, askIf }); setValidationError('') }}
           legend="Only ask when…"
           emptyText="Nothing selected: asked on every trip."
           anyText="Asked when any selected is true."
         />
+        {validationError && <p className="error-text small" role="alert">{validationError}</p>}
         <div className="sheet-actions">
           {!isNew && <button type="button" className="btn danger-text" onClick={onDelete}>Delete</button>}
           <button className="btn primary">Save</button>
@@ -73,9 +88,11 @@ function QuestionSheet({ question, questions, isNew, onSave, onDelete, onClose }
   )
 }
 
-export function MasterScreen({ data, setData, go }) {
-  const [tab, setTab] = useState('pack')
-  const [editing, setEditing] = useState(null)
+export function MasterScreen({ data, setData, go, itemId, returnTo }) {
+  const requestedTemplate = data.templates.find((item) => item.id === itemId)
+  const [tab, setTab] = useState(requestedTemplate?.category || 'pack')
+  const [search, setSearch] = useState('')
+  const [editing, setEditing] = useState(requestedTemplate ?? null)
   const [editingQ, setEditingQ] = useState(null)
   const [confirm, setConfirm] = useState(null)
 
@@ -88,6 +105,7 @@ export function MasterScreen({ data, setData, go }) {
         : [...d.templates, t],
     }))
     setTab(t.category)
+    setSearch('')
     setEditing(null)
   }
   const saveQuestion = (q) => {
@@ -98,25 +116,49 @@ export function MasterScreen({ data, setData, go }) {
         ? d.questions.map((x) => (x.id === q.id ? q : x))
         : [...d.questions, q],
     }))
+    setSearch('')
     setEditingQ(null)
   }
 
+  const query = search.trim().toLocaleLowerCase()
+  const tabLabel = TABS.find((item) => item.id === tab)?.label ?? tab
   const templates = data.templates.filter((t) => t.category === tab)
+  const filteredTemplates = templates.filter((t) => {
+    const conditions = [...t.when, ...(t.requires ? [t.requires] : [])]
+      .map((condition) => conditionLabel(condition, data.questions))
+      .join(' ')
+    return !query || `${t.text} ${t.group || ''} ${conditions}`.toLocaleLowerCase().includes(query)
+  })
+  const filteredQuestions = data.questions.filter((q) =>
+    !query || `${q.text} ${q.short || ''}`.toLocaleLowerCase().includes(query),
+  )
 
   return (
     <main>
-      <TopBar title="Master list" onBack={() => go({ name: 'trips' })} backLabel="Trips" />
+      <TopBar title="Master list" onBack={() => go(returnTo ?? { name: 'trips' })} backLabel={returnTo?.label ?? 'Trips'} />
       <nav className="tabs" aria-label="Sections">
         {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>{t.label}</button>
+          <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => { setTab(t.id); setSearch('') }}>{t.label}</button>
         ))}
       </nav>
+
+      <div className="search-field">
+        <label className="sr-only" htmlFor="master-list-search">Search {tabLabel}{tab === 'questions' ? '' : ' items'}</label>
+        <input
+          id="master-list-search"
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={`Search ${tabLabel.toLocaleLowerCase()}…`}
+        />
+        {search && <button type="button" className="link" onClick={() => setSearch('')}>Clear</button>}
+      </div>
 
       {tab === 'questions' ? (
         <section>
           <p className="muted small pad-x">Asked when you plan a trip. Items can depend on the answers.</p>
           <div className="card list">
-            {data.questions.map((q) => {
+            {filteredQuestions.map((q) => {
               const uses = data.templates.filter((t) => t.when.includes(q.id) || t.requires === q.id).length
               return (
                 <button key={q.id} className="list-row" onClick={() => setEditingQ({ q, isNew: false })}>
@@ -132,6 +174,7 @@ export function MasterScreen({ data, setData, go }) {
                 </button>
               )
             })}
+            {filteredQuestions.length === 0 && <p className="muted pad small">{query ? 'No matching questions.' : 'No questions yet.'}</p>}
           </div>
           <button className="btn wide add-btn" onClick={() => setEditingQ({ q: { id: newId(), text: '', short: '' }, isNew: true })}>
             + Add question
@@ -139,7 +182,7 @@ export function MasterScreen({ data, setData, go }) {
         </section>
       ) : (
         <section>
-          {(tab === 'pack' ? groupPackItems(templates) : [{ group: null, items: templates }]).map(({ group, items }) => (
+          {(tab === 'pack' ? groupPackItems(filteredTemplates) : [{ group: null, items: filteredTemplates }]).map(({ group, items }) => (
             <div key={group ?? 'all'} className="group">
               {group && <h3 className="group-title">{group}</h3>}
               <div className="card list">
@@ -160,7 +203,7 @@ export function MasterScreen({ data, setData, go }) {
               </div>
             </div>
           ))}
-          {templates.length === 0 && <div className="card"><p className="muted pad small">Nothing here yet.</p></div>}
+          {filteredTemplates.length === 0 && <div className="card"><p className="muted pad small">{query ? 'No matching items.' : 'Nothing here yet.'}</p></div>}
           <button
             className="btn wide add-btn"
             onClick={() => setEditing({ id: newId(), category: tab, text: '', when: [], requires: null, group: tab === 'pack' ? 'Main' : null, perDay: false })}

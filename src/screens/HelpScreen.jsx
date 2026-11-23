@@ -20,15 +20,15 @@ export function HelpScreen({ go }) {
         </ol>
         <p>
           When no trip is coming home, it does nothing. When one is, you get a notification listing what's
-          left — until you check the items off or end the trip.
+          left — until you check them off, end the trip, or three days after the return date. The trip stays open until you end it.
         </p>
         <p>
           You'll also get one notification at 8am on the last day, even without this automation.
         </p>
         <h2>Your data</h2>
         <p>
-          Everything is stored on this phone only, in <b>Files › On My iPhone › TravelList</b>. It's included
-          in your regular iPhone iCloud backup.
+          Everything is stored on this device only, in <b>Files › On My iPhone or iPad › TravelList</b>. It's included
+          in your regular iPhone or iPad iCloud backup.
         </p>
       </section>
     </main>

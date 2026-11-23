@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Capacitor } from '@capacitor/core'
-import { ConditionPicker, ConfirmSheet, RequirePicker, Sheet, TopBar } from '../components'
+import { ConditionPicker, ConfirmSheet, RequirePicker, Sheet, Toggle, TopBar } from '../components'
 import {
-  CATEGORIES, formatRange, groupPackItems, isComingHome, makePermanent, newId, nightsOf,
-  toggleChecked, tripItems, updateTrip,
+  appliesTo, CATEGORIES, formatRange, groupPackItems, isAsked, isComingHome, makePermanent, newId, nightsOf,
+  PACK_GROUPS, toggleChecked, tripItems, updateTrip,
 } from '../model'
 
 function AddOneOff({ onAdd }) {
@@ -25,7 +25,7 @@ function AddOneOff({ onAdd }) {
 function ItemRow({ item, onToggle, onMenu }) {
   return (
     <li className={`item ${item.checked ? 'done' : ''}`}>
-      <button className="item-check" onClick={onToggle} aria-pressed={item.checked}>
+      <button className="item-check" onClick={onToggle} role="checkbox" aria-checked={item.checked}>
         <span className="box" aria-hidden="true">{item.checked ? '✓' : ''}</span>
         <span className="item-text">
           {item.text}
@@ -40,6 +40,7 @@ function ItemRow({ item, onToggle, onMenu }) {
 
 export function TripScreen({ data, setData, go, today, tripId }) {
   const trip = data.trips.find((t) => t.id === tripId)
+  const [hideCompleted, setHideCompleted] = useState(false)
   const [menuItem, setMenuItem] = useState(null)
   const [promoting, setPromoting] = useState(null) // {item, when}
   const [confirm, setConfirm] = useState(null)
@@ -48,7 +49,10 @@ export function TripScreen({ data, setData, go, today, tripId }) {
   const comingHome = isComingHome(trip, today)
   const nights = nightsOf(trip)
   const done = items.filter((i) => i.checked).length
-  const hiddenTemplates = data.templates.filter((t) => trip.hidden[t.id])
+  const unanswered = data.questions.filter((question) =>
+    isAsked(question, trip, data.questions) && typeof trip.answers[question.id] !== 'boolean',
+  )
+  const hiddenTemplates = data.templates.filter((t) => trip.hidden[t.id] && appliesTo(t, trip, data.questions))
 
   const patch = (p) => setData((d) => updateTrip(d, trip.id, (t) => ({ ...t, ...p })))
   const addExtra = (category, text) =>
@@ -73,20 +77,30 @@ export function TripScreen({ data, setData, go, today, tripId }) {
       />
 
       <section className="trip-summary">
-        <p className="muted">
-          {formatRange(trip)} · {nights === 0 ? 'day trip' : `${nights} night${nights > 1 ? 's' : ''}`} · {done} of {items.length} done
-        </p>
-        <div className="progress" aria-hidden="true">
-          <div style={{ width: items.length ? `${(done / items.length) * 100}%` : 0 }} />
+        <div className="trip-summary-row">
+          <p className="muted">
+            {formatRange(trip)} · {nights === 0 ? 'day trip' : `${nights} night${nights > 1 ? 's' : ''}`} · {done} of {items.length} done
+          </p>
+          <label className="hide-completed">
+            <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
+            <span>Hide completed</span>
+          </label>
         </div>
       </section>
+
+      {!trip.ended && unanswered.length > 0 && (
+        <section className="banner">
+          <span>Answer {unanswered.length === 1 ? 'a trip question' : `${unanswered.length} trip questions`} to finish updating this list.</span>
+          <button className="btn small" onClick={() => go({ name: 'tripForm', id: trip.id })}>Review questions</button>
+        </section>
+      )}
 
       {!trip.ended && (comingHome ? (
         <section className="banner home">
           <strong>Coming home</strong>
           <span>
             {Capacitor.isNativePlatform()
-              ? 'Your car reminders are on until these are checked off.'
+              ? 'Car reminders stop when you check everything off, end the trip, or three days after return. The trip stays open until you end it.'
               : 'Check these off before you get home.'}
           </span>
           {trip.headingHome && <button className="link" onClick={() => patch({ headingHome: false })}>Not yet</button>}
@@ -100,7 +114,16 @@ export function TripScreen({ data, setData, go, today, tripId }) {
 
       {order.map((cat) => {
         const catItems = items.filter((i) => i.category === cat.id)
+        const visibleCatItems = hideCompleted ? catItems.filter((i) => !i.checked) : catItems
         const catDone = catItems.filter((i) => i.checked).length
+        const groups = cat.id === 'pack'
+          ? groupPackItems(catItems)
+            .map((group) => ({
+              ...group,
+              visibleItems: hideCompleted ? group.items.filter((i) => !i.checked) : group.items,
+            }))
+            .filter((group) => group.visibleItems.length > 0)
+          : [{ group: null, items: catItems, visibleItems: visibleCatItems }]
         return (
           <section key={cat.id} className="category">
             <h2 className="section-title">
@@ -108,12 +131,12 @@ export function TripScreen({ data, setData, go, today, tripId }) {
               {catItems.length > 0 && <span className="muted"> {catDone}/{catItems.length}</span>}
             </h2>
             <div className="card">
-              {(cat.id === 'pack' ? groupPackItems(catItems) : [{ group: null, items: catItems }]).map(({ group, items: groupItems }) => (
+              {groups.map(({ group, items: allGroupItems, visibleItems: groupItems }) => (
                 <div key={group ?? 'all'}>
                   {group && (
                     <h3 className="group-title in-card">
                       {group}
-                      <span className="muted"> {groupItems.filter((i) => i.checked).length}/{groupItems.length}</span>
+                      <span className="muted"> {allGroupItems.filter((i) => i.checked).length}/{allGroupItems.length}</span>
                     </h3>
                   )}
                   <ul className="items">
@@ -128,7 +151,9 @@ export function TripScreen({ data, setData, go, today, tripId }) {
                   </ul>
                 </div>
               ))}
-              {catItems.length === 0 && <p className="muted pad small">{cat.empty}</p>}
+              {catItems.length === 0
+                ? <p className="muted pad small">{cat.empty}</p>
+                : visibleCatItems.length === 0 && <p className="muted pad small">All {catDone} completed items are hidden.</p>}
               <AddOneOff onAdd={(text) => addExtra(cat.id, text)} />
             </div>
           </section>
@@ -174,11 +199,15 @@ export function TripScreen({ data, setData, go, today, tripId }) {
                 <button className="btn wide" onClick={() => { setHidden(menuItem.templateId, true); setMenuItem(null) }}>
                   Not needed this trip
                 </button>
-                <button className="btn wide" onClick={() => go({ name: 'master' })}>Edit in master list</button>
+                <button className="btn wide" onClick={() => go({
+                  name: 'master',
+                  itemId: menuItem.templateId,
+                  returnTo: { name: 'trip', id: trip.id, label: trip.name || 'Trip' },
+                })}>Edit in master list</button>
               </>
             ) : (
               <>
-                <button className="btn primary wide" onClick={() => { setPromoting({ item: menuItem, when: [], requires: null }); setMenuItem(null) }}>
+                <button className="btn primary wide" onClick={() => { setPromoting({ item: menuItem, when: [], requires: null, group: 'Main', perDay: false }); setMenuItem(null) }}>
                   Add to master list…
                 </button>
                 <button className="btn danger-text wide" onClick={() => { deleteExtra(menuItem.extraId); setMenuItem(null) }}>
@@ -202,12 +231,23 @@ export function TripScreen({ data, setData, go, today, tripId }) {
             value={promoting.requires}
             onChange={(requires) => setPromoting((p) => ({ ...p, requires }))}
           />
+          {promoting.item.category === 'pack' && (
+            <>
+              <label className="field">
+                <span>Heading</span>
+                <select value={promoting.group} onChange={(e) => setPromoting((p) => ({ ...p, group: e.target.value }))}>
+                  {PACK_GROUPS.map((group) => <option key={group} value={group}>{group}</option>)}
+                </select>
+              </label>
+              <Toggle label="One per day" checked={promoting.perDay} onChange={(perDay) => setPromoting((p) => ({ ...p, perDay }))} />
+            </>
+          )}
           <div className="sheet-actions">
             <button className="btn" onClick={() => setPromoting(null)}>Cancel</button>
             <button
               className="btn primary"
               onClick={() => {
-                setData((d) => makePermanent(d, trip.id, promoting.item.extraId, promoting.when, promoting.requires))
+                setData((d) => makePermanent(d, trip.id, promoting.item.extraId, promoting.when, promoting.requires, promoting))
                 setPromoting(null)
               }}
             >

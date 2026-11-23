@@ -19,7 +19,7 @@ export const AUTO_CONDITIONS = [
 ]
 
 export function newId() {
-  return Math.random().toString(36).slice(2, 10)
+  return globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)
 }
 
 // ---------- dates (local calendar days as 'YYYY-MM-DD') ----------
@@ -59,10 +59,21 @@ export function formatRange(trip) {
 // ---------- conditions ----------
 
 function autoFlags(trip) {
-  const month = parseDate(trip.start).getMonth() + 1
+  const start = parseDate(trip.start)
+  const end = parseDate(trip.end)
+  const startMonth = start.getFullYear() * 12 + start.getMonth()
+  const endMonth = end.getFullYear() * 12 + end.getMonth()
+  const overlapsMonths = (months) => {
+    // A trip spanning at least a full year necessarily overlaps each season.
+    if (endMonth - startMonth >= 11) return true
+    for (let month = startMonth; month <= endMonth; month += 1) {
+      if (months.includes(((month % 12) + 12) % 12 + 1)) return true
+    }
+    return false
+  }
   return {
-    'auto:winter': month >= 11 || month <= 3,
-    'auto:summer': month >= 5 && month <= 9,
+    'auto:winter': overlapsMonths([11, 12, 1, 2, 3]),
+    'auto:summer': overlapsMonths([5, 6, 7, 8, 9]),
     'auto:long': nightsOf(trip) + 1 > 3,
   }
 }
@@ -71,10 +82,23 @@ function autoFlags(trip) {
 // holds when that question is asked on this trip and answered yes.
 function conditionChecker(trip, questions) {
   const flags = autoFlags(trip)
+  const askedCache = new Map()
+  const evaluating = new Set()
   const askIfOf = (q) => [].concat(q.askIf ?? []).filter((c) => c !== q.id)
   // A question with `askIf` is only asked when any of those conditions holds,
   // e.g. "Swimming?" only when it's summer-ish or flying.
-  const isAsked = (q) => askIfOf(q).length === 0 || askIfOf(q).some(holds)
+  // Treat any malformed dependency cycle as not asked instead of recursing
+  // forever. The editor and backup importer also reject new cycles.
+  const isAsked = (q) => {
+    if (askedCache.has(q.id)) return askedCache.get(q.id)
+    if (evaluating.has(q.id)) return false
+    evaluating.add(q.id)
+    const conditions = askIfOf(q)
+    const result = conditions.length === 0 || conditions.some(holds)
+    evaluating.delete(q.id)
+    askedCache.set(q.id, result)
+    return result
+  }
   // An answer to a question that's no longer asked (dates moved) counts as no.
   const holds = (cond) => {
     if (cond.startsWith('auto:')) return !!flags[cond]
@@ -82,6 +106,47 @@ function conditionChecker(trip, questions) {
     return !!q && isAsked(q) && trip.answers[cond] === true
   }
   return { holds, isAsked }
+}
+
+// Returns a loop of question ids (first id repeated at the end, e.g.
+// ['a', 'b', 'a']) or null. With `startId`, only loops through that question
+// count. Each question is explored once, so this stays linear in the number of
+// questions and conditions however they're linked.
+export function questionDependencyCycle(questions, startId) {
+  const byId = new Map(questions.map((question) => [question.id, question]))
+  // Like the trip evaluator, ignore a question depending on itself.
+  const depsOf = (id) => [].concat(byId.get(id).askIf ?? []).filter((c) =>
+    c !== id && typeof c === 'string' && !c.startsWith('auto:') && byId.has(c))
+  const onPath = new Set()
+  const explored = new Set() // fully searched; no reportable loop from here
+  const path = []
+  const visit = (id) => {
+    onPath.add(id)
+    path.push(id)
+    for (const dep of depsOf(id)) {
+      if (onPath.has(dep)) {
+        if (startId == null || dep === startId) return [...path.slice(path.indexOf(dep)), dep]
+      } else if (!explored.has(dep)) {
+        const cycle = visit(dep)
+        if (cycle) return cycle
+      }
+    }
+    path.pop()
+    onPath.delete(id)
+    explored.add(id)
+    return null
+  }
+  if (startId != null) return byId.has(startId) ? visit(startId) : null
+  for (const question of questions) {
+    if (explored.has(question.id)) continue
+    const cycle = visit(question.id)
+    if (cycle) return cycle
+  }
+  return null
+}
+
+export function hasQuestionDependencyCycle(questions) {
+  return questionDependencyCycle(questions) !== null
 }
 
 export function isAsked(question, trip, questions) {
@@ -163,10 +228,14 @@ export function toggleChecked(data, tripId, key) {
   }))
 }
 
-export function makePermanent(data, tripId, extraId, when, requires = null) {
+export function makePermanent(data, tripId, extraId, when, requires = null, options = {}) {
   const trip = data.trips.find((t) => t.id === tripId)
   const extra = trip.extras.find((x) => x.id === extraId)
-  const template = { id: newId(), category: extra.category, text: extra.text, when, requires, perDay: false }
+  const template = {
+    id: newId(), category: extra.category, text: extra.text, when, requires,
+    group: extra.category === 'pack' ? (options.group || 'Main') : null,
+    perDay: extra.category === 'pack' && options.perDay === true,
+  }
   const { [`x:${extraId}`]: wasChecked, ...checked } = trip.checked
   const next = { ...data, masterEdited: true, templates: [...data.templates, template] }
   return updateTrip(next, tripId, (t) => ({
@@ -225,6 +294,7 @@ export function comingHomeSnapshot(data) {
       .map((t) => ({
         name: t.name,
         end: t.end,
+        remindUntil: addDays(t.end, 3),
         headingHome: t.headingHome,
         items: tripItems(data, t)
           .filter((i) => i.category === 'home' && !i.checked)

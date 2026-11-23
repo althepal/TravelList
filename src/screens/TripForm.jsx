@@ -4,7 +4,13 @@ import { isAsked, newTrip, nightsOf } from '../model'
 
 export function TripForm({ data, setData, go, today, tripId }) {
   const existing = data.trips.find((t) => t.id === tripId)
-  const [trip, setTrip] = useState(() => existing ?? newTrip(today))
+  const [trip, setTrip] = useState(() => {
+    const initial = existing ?? newTrip(today)
+    return {
+      ...initial,
+      answers: Object.fromEntries(data.questions.map((q) => [q.id, initial.answers[q.id] ?? false])),
+    }
+  })
   const set = (patch) => setTrip((t) => ({ ...t, ...patch }))
   const setAnswer = (qid, v) => setTrip((t) => ({ ...t, answers: { ...t.answers, [qid]: v } }))
 

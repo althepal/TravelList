@@ -2,6 +2,9 @@
   "appId": "com.travellist.app",
   "appName": "TravelList",
   "webDir": "dist",
+  "ios": {
+    "scheme": "TravelList"
+  },
   "plugins": {
     "LocalNotifications": {
       "presentationOptions": ["badge", "sound", "alert"]

@@ -16,8 +16,11 @@ async function readText(path) {
   try {
     const { data } = await Filesystem.readFile({ path, directory: Directory.Documents, encoding: Encoding.UTF8 })
     return data
-  } catch {
-    return null // first launch: no file yet
+  } catch (error) {
+    // Capacitor uses this code only when the requested file is absent. Other
+    // read failures must reach App so it won't replace unreadable saved data.
+    if (error?.code === 'OS-PLUG-FILE-0008') return null
+    throw error
   }
 }
 
