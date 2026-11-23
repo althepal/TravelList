@@ -262,34 +262,47 @@ export function deleteQuestion(data, questionId) {
 
 // Until you edit the master list yourself, saved data follows the latest
 // starting list (so updates to it reach a browser that saved an older one).
+// An edited list gets each starter update once, tracked by starterRevision,
+// so your later edits and deletes stick.
+export const STARTER_REVISION = 3
+
 export function refreshStarterList(data) {
-  const fresh = defaultData()
-  if (data.masterEdited) {
-    const existingHarrisonItems = data.templates.some((template) =>
-      template.id === 's-max-s-bathing-suit' || template.id === 's-max-s-baseball-glove',
-    )
-    if (!existingHarrisonItems) return data
-    // These Harrison-with-Max packing defaults are part of the app's trip
-    // behavior, so keep them current even after someone edits other master
-    // list entries. Preserve each item's stable ID and per-trip check state.
-    const requiredIds = new Set([
-      's-max-s-bathing-suit',
-      's-max-s-baseball-glove',
-      's-max-s-football-gloves',
-    ])
-    const requiredTemplates = fresh.templates.filter((template) => requiredIds.has(template.id))
-    const templates = [...data.templates]
-    for (const template of requiredTemplates) {
-      const index = templates.findIndex((existing) => existing.id === template.id)
-      if (index === -1) {
-        templates.push(template)
-      } else {
-        templates[index] = { ...templates[index], ...template }
-      }
-    }
-    return { ...data, templates }
+  if (!data.masterEdited) {
+    const fresh = defaultData()
+    return { ...data, questions: fresh.questions, templates: fresh.templates, starterRevision: STARTER_REVISION }
   }
-  return { ...data, questions: fresh.questions, templates: fresh.templates }
+  if ((data.starterRevision ?? 1) >= STARTER_REVISION) return data
+  return { ...starterUpdate(data), starterRevision: STARTER_REVISION }
+}
+
+// Revision 3: add "Plato's food", remove the mistaken Out the Door car-charge
+// item, and bring Max's Harrison items up to date when relevant.
+function starterUpdate(data) {
+  const fresh = new Map(defaultData().templates.map((t) => [t.id, t]))
+  const templates = [...data.templates]
+  const indexOf = (id) => templates.findIndex((t) => t.id === id)
+
+  for (const id of ['s-plato-s-food']) {
+    const item = fresh.get(id)
+    if (!templates.some((t) => t.id === id || (t.category === item.category && t.text === item.text))) {
+      templates.push(item)
+    }
+  }
+  const carChargeIndex = indexOf('s-charge-car-for-trip')
+  if (carChargeIndex !== -1) templates.splice(carChargeIndex, 1)
+
+  const harrisonIds = ['s-max-s-bathing-suit', 's-max-s-baseball-glove', 's-max-s-football-gloves']
+  const questionIds = new Set(data.questions.map((q) => q.id))
+  if (questionIds.has('max') && questionIds.has('harrison') && harrisonIds.some((id) => indexOf(id) !== -1)) {
+    for (const id of harrisonIds) {
+      const item = { ...fresh.get(id) }
+      item.when = item.when.filter((c) => c.startsWith('auto:') || questionIds.has(c))
+      const index = indexOf(id)
+      if (index !== -1) templates[index] = item
+      else templates.splice(indexOf('s-max-s-baseball-glove') + 1 || templates.length, 0, item)
+    }
+  }
+  return { ...data, templates }
 }
 
 export function newTrip(today = todayStr()) {
@@ -391,10 +404,11 @@ export function defaultData() {
     t('door', null, 'Turn off recirc pump'),
     t('door', null, 'Take out the trash'),
     t('door', null, 'Feed fish'),
+    t('door', null, "Plato's food"),
     t('door', null, 'Set Chiller (Fish)', ['auto:summer']),
     t('door', null, 'Replace Filter Socks'),
     t('home', null, 'Turn the HVAC back on'),
     t('home', null, 'Turn the recirc pump back on'),
   ]
-  return { version: 1, masterEdited: false, questions, templates, trips: [] }
+  return { version: 1, masterEdited: false, starterRevision: STARTER_REVISION, questions, templates, trips: [] }
 }

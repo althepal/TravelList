@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   comingHomeSnapshot, defaultData, deleteQuestion, groupPackItems, isAsked, isComingHome, makePermanent,
-  nightsOf, questionDependencyCycle, refreshStarterList, toggleChecked, tripItems,
+  nightsOf, questionDependencyCycle, refreshStarterList, STARTER_REVISION, toggleChecked, tripItems,
 } from './model'
 import { plannedReminders } from './reminders'
 
@@ -152,10 +152,19 @@ describe('coming home', () => {
 
 describe('plannedReminders', () => {
   it('schedules an 8am last-day reminder with unchecked Coming Home items', () => {
+    const home = plannedReminders(setup(), new Date(2026, 10, 20)).find((r) => r.title.startsWith('Last day'))
+    expect(home.at).toEqual(new Date(2026, 11, 4, 8))
+    expect(home.body).toBe('Turn the HVAC back on\nTurn the recirc pump back on')
+  })
+
+  it('schedules an 8pm car-charge reminder the night before the trip', () => {
     const plan = plannedReminders(setup(), new Date(2026, 10, 20))
-    expect(plan).toHaveLength(1)
-    expect(plan[0].at).toEqual(new Date(2026, 11, 4, 8))
-    expect(plan[0].body).toBe('Turn the HVAC back on\nTurn the recirc pump back on')
+    expect(plan).toHaveLength(2)
+    const car = plan.find((r) => r.title === 'Charge the car for Tahoe')
+    expect(car.at).toEqual(new Date(2026, 10, 30, 20))
+    expect(car.id).not.toBe(plan.find((r) => r !== car).id)
+    // Once that evening has passed, only the last-day reminder is left.
+    expect(plannedReminders(setup(), new Date(2026, 11, 1))).toHaveLength(1)
   })
 
   it('skips reminders in the past and for ended trips', () => {
@@ -174,8 +183,56 @@ describe('starter list', () => {
     const old = { ...setup(), templates: [{ id: 'seed1', category: 'pack', text: 'Wallet & keys', when: [] }] }
     expect(refreshStarterList(old).templates.map((t) => t.text)).not.toContain('Wallet & keys')
     expect(refreshStarterList(old).trips).toEqual(old.trips)
-    const edited = { ...old, masterEdited: true }
+    const edited = { ...old, masterEdited: true, starterRevision: STARTER_REVISION }
     expect(refreshStarterList(edited)).toBe(edited)
+  })
+
+  describe('one-time update of an edited list', () => {
+    const ids = (data) => data.templates.map((t) => t.id)
+    const oldEdited = () => {
+      const data = setup()
+      return {
+        ...data,
+        masterEdited: true,
+        starterRevision: undefined,
+        templates: data.templates
+          .filter((t) => !['s-max-s-football-gloves', 's-charge-car-for-trip', 's-plato-s-food'].includes(t.id))
+          .map((t) => t.id === 's-max-s-baseball-glove' ? { ...t, text: "Max's baseball glove" } : t)
+          .concat({ id: 's-charge-car-for-trip', category: 'door', text: 'Charge car for trip', when: [], requires: null, group: null, perDay: false }),
+      }
+    }
+
+    it('adds Plato\'s food, removes the car-charge checklist item, and updates Harrison items', () => {
+      const next = refreshStarterList(oldEdited())
+      expect(next.starterRevision).toBe(STARTER_REVISION)
+      expect(ids(next)).toContain('s-plato-s-food')
+      expect(ids(next)).not.toContain('s-charge-car-for-trip')
+      expect(next.templates.find((t) => t.id === 's-max-s-baseball-glove').text).toBe("Max's baseball mitt")
+      const glove = ids(next).indexOf('s-max-s-baseball-glove')
+      expect(ids(next)[glove + 1]).toBe('s-max-s-football-gloves')
+    })
+
+    it('runs once, so later edits and deletes stick', () => {
+      const updated = refreshStarterList(oldEdited())
+      const edited = {
+        ...updated,
+        templates: updated.templates
+          .filter((t) => t.id !== 's-max-s-football-gloves' && t.id !== 's-plato-s-food')
+          .map((t) => t.id === 's-max-s-baseball-glove' ? { ...t, text: 'Glove' } : t),
+      }
+      expect(refreshStarterList(edited)).toBe(edited)
+    })
+
+    it('leaves the Harrison items alone when their questions were deleted', () => {
+      const next = refreshStarterList(deleteQuestion(oldEdited(), 'max'))
+      expect(ids(next)).not.toContain('s-max-s-football-gloves')
+      expect(next.templates.every((t) => t.requires !== 'max')).toBe(true)
+    })
+
+    it('drops a condition on a deleted question', () => {
+      const next = refreshStarterList(deleteQuestion(oldEdited(), 'swim'))
+      expect(next.templates.find((t) => t.id === 's-max-s-bathing-suit').when).toEqual(['harrison'])
+    })
   })
 })
 

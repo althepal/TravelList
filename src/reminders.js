@@ -1,8 +1,9 @@
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
-import { parseDate, tripItems } from './model'
+import { addDays, parseDate, tripItems } from './model'
 
 const LAST_DAY_HOUR = 8
+const BEFORE_TRIP_HOUR = 20
 
 function at(day, hour) {
   const d = parseDate(day)
@@ -17,6 +18,14 @@ export function plannedReminders(data, now = new Date()) {
     if (trip.ended) return
     const items = tripItems(data, trip).filter((x) => !x.checked)
     const name = trip.name || 'your trip'
+
+    out.push({
+      id: i * 10 + 1,
+      title: `Charge the car for ${name}`,
+      body: 'Charge the car for your trip tomorrow.',
+      at: at(addDays(trip.start, -1), BEFORE_TRIP_HOUR),
+      tripId: trip.id,
+    })
 
     const home = items.filter((x) => x.category === 'home')
     if (home.length && !trip.headingHome) {
@@ -33,7 +42,7 @@ export function plannedReminders(data, now = new Date()) {
 }
 
 // Replaces all pending notifications with the current plan. Cheap enough to
-// run after every change; iOS allows 64 pending and a trip uses at most one.
+// run after every change; iOS allows 64 pending and each trip uses at most two.
 export async function syncReminders(data) {
   if (!Capacitor.isNativePlatform()) return
   const plan = plannedReminders(data)
