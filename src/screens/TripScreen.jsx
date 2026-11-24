@@ -23,6 +23,18 @@ function AddOneOff({ onAdd }) {
   )
 }
 
+// Heading for a finished category or pack group. Tapping it shows or hides
+// the checked items; unfinished ones are always open.
+function DoneToggle({ label, count, open, onToggle }) {
+  return (
+    <button className="done-toggle" onClick={onToggle} aria-expanded={open}>
+      {label}
+      <span className="muted"> ✓ {count}/{count}</span>
+      <span className="done-chevron muted" aria-hidden="true">{open ? '⌄' : '›'}</span>
+    </button>
+  )
+}
+
 function ItemRow({ item, onToggle, onMenu }) {
   return (
     <li className={`item ${item.checked ? 'done' : ''}`}>
@@ -45,6 +57,13 @@ export function TripScreen({ data, setData, go, today, tripId }) {
   const [menuItem, setMenuItem] = useState(null)
   const [promoting, setPromoting] = useState(null) // { extraId, template }
   const [confirm, setConfirm] = useState(null)
+  const [opened, setOpened] = useState(() => new Set()) // finished sections the user expanded
+  const toggleOpen = (key) => setOpened((prev) => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  })
 
   const items = tripItems(data, trip)
   const comingHome = isComingHome(trip, today)
@@ -112,6 +131,17 @@ export function TripScreen({ data, setData, go, today, tripId }) {
         const catItems = items.filter((i) => i.category === cat.id)
         const visibleCatItems = hideCompleted ? catItems.filter((i) => !i.checked) : catItems
         const catDone = catItems.filter((i) => i.checked).length
+        const catFinished = catItems.length > 0 && catDone === catItems.length
+        const catKey = `cat:${cat.id}`
+        if (catFinished && !opened.has(catKey)) {
+          return (
+            <section key={cat.id} className="category">
+              <h2 className="section-title">
+                <DoneToggle label={cat.label} count={catItems.length} open={false} onToggle={() => toggleOpen(catKey)} />
+              </h2>
+            </section>
+          )
+        }
         const groups = cat.id === 'pack'
           ? groupPackItems(catItems)
             .map((group) => ({
@@ -123,30 +153,41 @@ export function TripScreen({ data, setData, go, today, tripId }) {
         return (
           <section key={cat.id} className="category">
             <h2 className="section-title">
-              {cat.label}
-              {catItems.length > 0 && <span className="muted"> {catDone}/{catItems.length}</span>}
+              {catFinished
+                ? <DoneToggle label={cat.label} count={catItems.length} open onToggle={() => toggleOpen(catKey)} />
+                : <>{cat.label}{catItems.length > 0 && <span className="muted"> {catDone}/{catItems.length}</span>}</>}
             </h2>
             <div className="card">
-              {groups.map(({ group, items: allGroupItems, visibleItems: groupItems }) => (
-                <div key={group ?? 'all'}>
-                  {group && (
-                    <h3 className="group-title in-card">
-                      {group}
-                      <span className="muted"> {allGroupItems.filter((i) => i.checked).length}/{allGroupItems.length}</span>
-                    </h3>
-                  )}
-                  <ul className="items">
-                    {groupItems.map((item) => (
-                      <ItemRow
-                        key={item.key}
-                        item={item}
-                        onToggle={() => setData((d) => toggleChecked(d, trip.id, item.key))}
-                        onMenu={() => setMenuItem(item)}
-                      />
-                    ))}
-                  </ul>
-                </div>
-              ))}
+              {groups.map(({ group, items: allGroupItems, visibleItems: groupItems }) => {
+                const groupDone = allGroupItems.filter((i) => i.checked).length
+                // Inside an opened finished category, show everything in one tap.
+                const groupFinished = group && !catFinished && groupDone === allGroupItems.length
+                const groupKey = `group:${group}`
+                const groupOpen = !groupFinished || opened.has(groupKey)
+                return (
+                  <div key={group ?? 'all'}>
+                    {group && (
+                      <h3 className="group-title in-card">
+                        {groupFinished
+                          ? <DoneToggle label={group} count={allGroupItems.length} open={groupOpen} onToggle={() => toggleOpen(groupKey)} />
+                          : <>{group}<span className="muted"> {groupDone}/{allGroupItems.length}</span></>}
+                      </h3>
+                    )}
+                    {groupOpen && (
+                      <ul className="items">
+                        {groupItems.map((item) => (
+                          <ItemRow
+                            key={item.key}
+                            item={item}
+                            onToggle={() => setData((d) => toggleChecked(d, trip.id, item.key))}
+                            onMenu={() => setMenuItem(item)}
+                          />
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )
+              })}
               {catItems.length === 0
                 ? <p className="muted pad small">{cat.empty}</p>
                 : visibleCatItems.length === 0 && <p className="muted pad small">All {catDone} completed items are hidden.</p>}

@@ -567,3 +567,25 @@ section { margin-top: 20px; }
 .add-row input { padding: 7px 0; font-size: 16px; }
 .banner { padding: 10px 14px; }
 .trip-footer { margin-top: 20px; }
+
+/* ---------- finished sections collapse to one line ---------- */
+
+.done-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  text-align: left;
+}
+.done-toggle .muted { color: var(--muted); }
+.done-chevron { margin-left: auto; font-size: 15px; }
+.section-title .done-toggle { min-height: 32px; align-items: center; }
+.group-title.in-card .done-toggle { min-height: 28px; align-items: center; }
