@@ -53,7 +53,7 @@ function ItemRow({ item, onToggle, onMenu }) {
 
 export function TripScreen({ data, setData, go, today, tripId }) {
   const trip = data.trips.find((t) => t.id === tripId)
-  const [hideCompleted, setHideCompleted] = useState(false)
+  const [hideCompleted, setHideCompleted] = useState(true)
   const [menuItem, setMenuItem] = useState(null)
   const [promoting, setPromoting] = useState(null) // { extraId, template }
   const [confirm, setConfirm] = useState(null)
