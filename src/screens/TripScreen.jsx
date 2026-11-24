@@ -5,7 +5,10 @@ import {
   addExtra, CATEGORIES, deleteTrip, formatRange, groupPackItems, isComingHome, makePermanent, newTemplate, nightsLabel,
   removeExtra, setHidden, toggleChecked, tripConditions, tripItems, updateTrip,
 } from '../model'
+import { loadPrefs } from '../prefs'
 import { TemplateSheet } from './TemplateSheet'
+
+const findEl = (attr, value) => [...document.querySelectorAll(`[${attr}]`)].find((el) => el.getAttribute(attr) === value)
 
 function AddOneOff({ onAdd }) {
   const [text, setText] = useState('')
@@ -65,24 +68,62 @@ export function TripScreen({ data, setData, go, today, tripId }) {
     return next
   })
 
-  // Checking an item can remove its row (Hide completed, or the section
-  // collapsing). For keyboard users, move focus to the next unchecked item
-  // in that section, or to the collapsed heading, instead of losing it.
+  // Set on the home screen; read once when the trip opens.
+  const [{ hideDelay, tapPause }] = useState(loadPrefs)
+
+  // Recently checked items still shown crossed out; each has a timer.
+  const [lingering, setLingering] = useState(() => new Set())
+  const timers = useRef(new Map())
+  useEffect(() => {
+    const pending = timers.current
+    return () => { for (const t of pending.values()) clearTimeout(t) }
+  }, [])
+  const settleUntil = useRef(0)
+  const settled = () => Date.now() >= settleUntil.current
+  const guard = (fn) => (...args) => { if (settled()) fn(...args) }
+
+  // When a focused row disappears, focus moves to the next unchecked item in
+  // its list, or to the heading the section collapses into.
   const refocus = useRef(null)
   useEffect(() => {
     const target = refocus.current
     if (!target) return
     refocus.current = null
-    const find = (attr, value) => [...document.querySelectorAll(`[${attr}]`)].find((el) => el.getAttribute(attr) === value)
-    if (find('data-item', target.from)) return
-    find(target.toggle ? 'data-toggle' : 'data-item', target.toggle ?? target.item)?.focus()
+    if (findEl('data-item', target.from)) return
+    const el = target.toggle ? findEl('data-toggle', target.toggle) : findEl('data-item', target.item)
+    el?.focus({ preventScroll: true })
   })
-  const check = (event, item, sectionItems, collapseKey) => {
-    if (event.detail === 0 && !item.checked) {
-      const i = sectionItems.indexOf(item)
-      const next = sectionItems.slice(i + 1).find((x) => !x.checked)
-        ?? sectionItems.slice(0, i).reverse().find((x) => !x.checked)
-      refocus.current = next ? { from: item.key, item: next.key } : { from: item.key, toggle: collapseKey }
+
+  const forget = (key) => setLingering((prev) => {
+    const next = new Set(prev)
+    next.delete(key)
+    return next
+  })
+  // If this row has focus and is about to go, note where focus should land.
+  const rememberFocus = (key) => {
+    const row = findEl('data-item', key)
+    if (row && row === document.activeElement) {
+      const list = row.closest('ul')
+      const unchecked = [...list.querySelectorAll('[data-item][aria-checked="false"]')].filter((el) => el !== row)
+      const next = unchecked.find((el) => row.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) ?? unchecked.at(-1)
+      refocus.current = next
+        ? { from: key, item: next.getAttribute('data-item') }
+        : { from: key, toggle: list.getAttribute('data-collapse') }
+    }
+  }
+  const expire = (key) => {
+    timers.current.delete(key)
+    rememberFocus(key)
+    forget(key)
+  }
+  const check = (item) => {
+    clearTimeout(timers.current.get(item.key))
+    timers.current.delete(item.key)
+    if (item.checked) forget(item.key)
+    else if (hideDelay === 0) rememberFocus(item.key)
+    else {
+      setLingering((prev) => new Set(prev).add(item.key))
+      timers.current.set(item.key, setTimeout(() => expire(item.key), hideDelay))
     }
     setData((d) => toggleChecked(d, trip.id, item.key))
   }
@@ -98,6 +139,16 @@ export function TripScreen({ data, setData, go, today, tripId }) {
 
   const patch = (p) => setData((d) => updateTrip(d, trip.id, (t) => ({ ...t, ...p })))
   const hide = (templateId, hidden) => setData((d) => setHidden(d, trip.id, templateId, hidden))
+
+  // Checked and done lingering: counts as gone for hiding and collapsing.
+  const gone = (i) => i.checked && !lingering.has(i.key)
+  const shownKeys = [] // filled while rendering below; read after render
+  const lastShown = useRef(null)
+  useEffect(() => {
+    const signature = shownKeys.join('|')
+    if (lastShown.current !== null && lastShown.current !== signature) settleUntil.current = Date.now() + tapPause
+    lastShown.current = signature
+  })
 
   // While coming home, those reminders matter most, so show them first.
   const order = comingHome
@@ -152,57 +203,58 @@ export function TripScreen({ data, setData, go, today, tripId }) {
       {order.map((cat) => {
         const catItems = items.filter((i) => i.category === cat.id)
         const catDone = catItems.filter((i) => i.checked).length
-        const catFinished = catItems.length > 0 && catDone === catItems.length
+        const catFinished = catItems.length > 0 && catItems.every(gone)
         const catKey = `cat:${cat.id}`
         const catOpen = opened.has(catKey)
         if (catFinished && !catOpen) {
           return (
             <section key={cat.id} className="category">
               <h2 className="section-title">
-                <DoneToggle toggleKey={catKey} label={cat.label} count={catItems.length} open={false} onToggle={() => toggleOpen(catKey)} />
+                <DoneToggle toggleKey={catKey} label={cat.label} count={catItems.length} open={false} onToggle={guard(() => toggleOpen(catKey))} />
               </h2>
             </section>
           )
         }
         // Hide completed applies to unfinished sections. A finished section the
         // user opened shows all its items so they can be reviewed or unchecked.
-        const visible = (list) => (hideCompleted && !catFinished ? list.filter((i) => !i.checked) : list)
+        const visible = (list) => (hideCompleted && !catFinished ? list.filter((i) => !gone(i)) : list)
         const groups = cat.id === 'pack' ? groupPackItems(catItems) : [{ group: null, items: catItems }]
         return (
           <section key={cat.id} className="category">
             <h2 className="section-title">
               {catFinished
-                ? <DoneToggle toggleKey={catKey} label={cat.label} count={catItems.length} open onToggle={() => toggleOpen(catKey)} />
+                ? <DoneToggle toggleKey={catKey} label={cat.label} count={catItems.length} open onToggle={guard(() => toggleOpen(catKey))} />
                 : <>{cat.label}{catItems.length > 0 && <span className="muted"> {catDone}/{catItems.length}</span>}</>}
             </h2>
             <div className="card">
               {groups.map(({ group, items: groupItems }) => {
                 const groupDone = groupItems.filter((i) => i.checked).length
                 // Inside an opened finished category, show everything in one tap.
-                const groupFinished = group && !catFinished && groupDone === groupItems.length
+                const groupFinished = group && !catFinished && groupItems.every(gone)
                 const groupKey = `group:${group}`
                 const groupOpen = groupFinished && opened.has(groupKey)
                 const shown = groupFinished ? (groupOpen ? groupItems : []) : visible(groupItems)
                 // Where focus goes if checking an item collapses this section.
                 const rest = catItems.filter((i) => !groupItems.includes(i))
-                const collapseKey = group && rest.some((i) => !i.checked) ? groupKey : catKey
+                const collapseKey = group && !rest.every(gone) ? groupKey : catKey
+                shownKeys.push(...shown.map((i) => i.key))
                 return (
                   <div key={group ?? 'all'}>
                     {group && (
                       <h3 className="group-title in-card">
                         {groupFinished
-                          ? <DoneToggle toggleKey={groupKey} label={group} count={groupItems.length} open={groupOpen} onToggle={() => toggleOpen(groupKey)} />
+                          ? <DoneToggle toggleKey={groupKey} label={group} count={groupItems.length} open={groupOpen} onToggle={guard(() => toggleOpen(groupKey))} />
                           : <>{group}<span className="muted"> {groupDone}/{groupItems.length}</span></>}
                       </h3>
                     )}
                     {shown.length > 0 && (
-                      <ul className="items">
+                      <ul className="items" data-collapse={collapseKey}>
                         {shown.map((item) => (
                           <ItemRow
                             key={item.key}
                             item={item}
-                            onToggle={(e) => check(e, item, groupItems, collapseKey)}
-                            onMenu={() => setMenuItem(item)}
+                            onToggle={guard(() => check(item))}
+                            onMenu={guard(() => setMenuItem(item))}
                           />
                         ))}
                       </ul>

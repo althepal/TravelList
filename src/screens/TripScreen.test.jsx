@@ -3,7 +3,11 @@ import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { defaultData, newTemplate, newTrip, saveTrip } from '../model'
+import { DEFAULT_PREFS, savePrefs } from '../prefs'
 import { TripScreen } from './TripScreen'
+
+const LINGER_MS = DEFAULT_PREFS.hideDelay
+const SETTLE_MS = DEFAULT_PREFS.tapPause
 
 const roots = []
 
@@ -42,15 +46,21 @@ const itemButton = (node, id) => node.querySelector(`[data-item="t:${id}"]`)
 const toggle = (node, key) => node.querySelector(`[data-toggle="${key}"]`)
 // A keyboard-activated click has detail 0, the way Space/Enter on a button reports it.
 const keyboardClick = (el) => act(async () => { el.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 })) })
+const wait = (ms) => act(async () => { vi.advanceTimersByTime(ms) })
 const click = (el) => act(async () => { el.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })) })
 
-beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true) })
+beforeEach(() => {
+  vi.useFakeTimers()
+  localStorage.clear()
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+})
 afterEach(async () => {
   for (const { node, root } of roots.splice(0)) {
     await act(async () => { root.unmount() })
     node.remove()
   }
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 it('starts with completed items hidden', async () => {
@@ -92,6 +102,7 @@ it('moves keyboard focus to the next unchecked item when a checked row disappear
   itemButton(node, 'mail').focus()
 
   await keyboardClick(itemButton(node, 'mail'))
+  await wait(LINGER_MS)
 
   expect(itemButton(node, 'mail')).toBeNull()
   expect(document.activeElement).toBe(itemButton(node, 'plants'))
@@ -102,6 +113,7 @@ it('moves keyboard focus to the collapsed heading when checking the last item', 
   itemButton(node, 'socks').focus()
 
   await keyboardClick(itemButton(node, 'socks'))
+  await wait(LINGER_MS)
 
   expect(document.activeElement).toBe(toggle(node, 'group:Main'))
 })
@@ -111,6 +123,73 @@ it('moves focus to the category heading when the last item finishes the whole ca
   itemButton(node, 'bins').focus()
 
   await keyboardClick(itemButton(node, 'bins'))
+  await wait(LINGER_MS)
 
   expect(document.activeElement).toBe(toggle(node, 'cat:todo'))
+})
+
+it('keeps a checked item on screen, crossed out, before hiding it', async () => {
+  const node = await render(makeData())
+
+  await click(itemButton(node, 'mail'))
+
+  expect(itemButton(node, 'mail').getAttribute('aria-checked')).toBe('true')
+  await wait(LINGER_MS - 1)
+  expect(itemButton(node, 'mail')).not.toBeNull()
+  await wait(1)
+  expect(itemButton(node, 'mail')).toBeNull()
+})
+
+it('waits for the last item to linger before collapsing its section', async () => {
+  const node = await render(makeData({ checked: ['mail', 'plants'] }))
+
+  await click(itemButton(node, 'bins'))
+
+  expect(toggle(node, 'cat:todo')).toBeNull()
+  expect(itemButton(node, 'bins')).not.toBeNull()
+  await wait(LINGER_MS)
+  expect(toggle(node, 'cat:todo').getAttribute('aria-expanded')).toBe('false')
+})
+
+it('unchecking a lingering item keeps it on screen', async () => {
+  const node = await render(makeData())
+  await click(itemButton(node, 'mail'))
+  await click(itemButton(node, 'mail'))
+  await wait(LINGER_MS)
+  expect(itemButton(node, 'mail').getAttribute('aria-checked')).toBe('false')
+})
+
+it('ignores taps right after the list changes', async () => {
+  const node = await render(makeData())
+  await click(itemButton(node, 'mail'))
+  await wait(LINGER_MS) // "Hold mail" disappears; "Water plants" slides up
+
+  await click(itemButton(node, 'plants'))
+  expect(itemButton(node, 'plants').getAttribute('aria-checked')).toBe('false')
+
+  await wait(SETTLE_MS)
+  await click(itemButton(node, 'plants'))
+  expect(itemButton(node, 'plants').getAttribute('aria-checked')).toBe('true')
+})
+
+it('with the hide delay set to Now, a checked item goes at once and focus moves on', async () => {
+  savePrefs({ ...DEFAULT_PREFS, hideDelay: 0 })
+  const node = await render(makeData())
+  itemButton(node, 'mail').focus()
+
+  await keyboardClick(itemButton(node, 'mail'))
+
+  expect(itemButton(node, 'mail')).toBeNull()
+  expect(document.activeElement).toBe(itemButton(node, 'plants'))
+})
+
+it('with the tap pause off, taps right after the list moves still count', async () => {
+  savePrefs({ ...DEFAULT_PREFS, tapPause: 0 })
+  const node = await render(makeData())
+  await click(itemButton(node, 'mail'))
+  await wait(LINGER_MS)
+
+  await click(itemButton(node, 'plants'))
+
+  expect(itemButton(node, 'plants').getAttribute('aria-checked')).toBe('true')
 })

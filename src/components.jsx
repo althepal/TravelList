@@ -103,3 +103,20 @@ export function ConditionPicker({
     </fieldset>
   )
 }
+
+// A labelled row with a compact picker on the right (a wheel on iPhone).
+export function ChoiceRow({ label, hint, options, value, onChange }) {
+  return (
+    <label className="choice-row">
+      <span>
+        {label}
+        {hint && <small className="muted block">{hint}</small>}
+      </span>
+      <span className="choice-select">
+        <select value={value} onChange={(e) => onChange(Number(e.target.value))}>
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </span>
+    </label>
+  )
+}

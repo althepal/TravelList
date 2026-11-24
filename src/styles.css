@@ -535,6 +535,40 @@ section { margin-top: 20px; }
   color: var(--muted);
 }
 .yesno button.on { background: var(--accent); color: var(--accent-text); }
+
+.choice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 50px;
+  padding: 8px 16px;
+}
+.choice-select { position: relative; flex: none; }
+.choice-select select {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 36px;
+  padding: 6px 26px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+}
+.choice-select select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.choice-select::after {
+  content: "⌄";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-65%);
+  color: var(--muted);
+  pointer-events: none;
+}
+/* Match the button rows around it, which draw no divider. */
+.list > .choice-row { border-top: 0; }
 .center { text-align: center; }
 
 /* ---------- pack headings ---------- */
