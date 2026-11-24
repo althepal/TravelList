@@ -175,6 +175,7 @@ section { margin-top: 20px; }
 .template-row { flex-wrap: wrap; }
 .account-detail { min-width: 0; overflow-wrap: anywhere; text-align: right; }
 .account-detail.sign-in { color: var(--accent); }
+.account-status { display: block; color: var(--accent); font-size: 0.85em; }
 
 .trip-card {
   display: flex;

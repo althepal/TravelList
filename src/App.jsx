@@ -174,7 +174,7 @@ export default function App() {
   } else if (screen.name === 'sync') {
     body = <SyncScreen go={go} onAuthenticated={finishGoogleSignIn} {...sync} />
   } else {
-    body = <TripsScreen {...props} user={sync.user} authLoading={sync.authLoading} />
+    body = <TripsScreen {...props} user={sync.user} authLoading={sync.authLoading} ownerEmail={sync.ownerEmail} />
   }
 
   return (

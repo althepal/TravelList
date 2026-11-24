@@ -30,10 +30,13 @@ function TripCard({ data, trip, today, go }) {
   )
 }
 
-export function TripsScreen({ data, go, today, user, authLoading }) {
+export function TripsScreen({ data, go, today, user, authLoading, ownerEmail }) {
   const current = data.trips.filter((t) => !t.ended).sort((a, b) => a.start.localeCompare(b.start))
   const past = data.trips.filter((t) => t.ended).sort((a, b) => b.start.localeCompare(a.start))
-  const accountDetail = authLoading ? 'Checking…' : user ? user.email || 'Signed in' : 'Sign in'
+  const accountDetail = authLoading ? 'Checking…'
+    : user ? user.email || 'Signed in'
+    : ownerEmail ? <>{ownerEmail}<span className="account-status">Not signed in</span></>
+    : 'Sign in'
   return (
     <main>
       <header className="hero">
@@ -62,7 +65,7 @@ export function TripsScreen({ data, go, today, user, authLoading }) {
           </button>
           <button className="list-row" onClick={() => go({ name: 'sync' })}>
             <span>Account</span>
-            <span className={`account-detail ${authLoading || user ? 'muted' : 'sign-in'}`}>
+            <span className={`account-detail ${authLoading || user || ownerEmail ? 'muted' : 'sign-in'}`}>
               {accountDetail} <span aria-hidden="true">›</span>
             </span>
           </button>

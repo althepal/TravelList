@@ -78,6 +78,12 @@ export function SyncScreen({ go, onAuthenticated, user, authLoading, syncStatus,
               <p><strong>Connect the iPhone with your existing checklist first.</strong> If this account already has cloud data, it will replace the local list on this device.</p>
             )}
             <div className="card form-card">
+              {ownerEmail && (
+                <>
+                  <p><strong>{ownerEmail}</strong></p>
+                  <p className="muted small">Not signed in</p>
+                </>
+              )}
               {formError && <p className="error-text" role="alert">{formError}</p>}
               <button type="button" className="btn primary" onClick={authenticate} disabled={busy}>
                 {busy ? 'Opening Google…' : 'Continue with Google'}
