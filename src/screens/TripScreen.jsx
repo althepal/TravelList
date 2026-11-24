@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { ConfirmSheet, Sheet, TopBar } from '../components'
 import {
@@ -25,9 +25,9 @@ function AddOneOff({ onAdd }) {
 
 // Heading for a finished category or pack group. Tapping it shows or hides
 // the checked items; unfinished ones are always open.
-function DoneToggle({ label, count, open, onToggle }) {
+function DoneToggle({ toggleKey, label, count, open, onToggle }) {
   return (
-    <button className="done-toggle" onClick={onToggle} aria-expanded={open}>
+    <button className="done-toggle" data-toggle={toggleKey} onClick={onToggle} aria-expanded={open}>
       {label}
       <span className="muted"> ✓ {count}/{count}</span>
       <span className="done-chevron muted" aria-hidden="true">{open ? '⌄' : '›'}</span>
@@ -38,7 +38,7 @@ function DoneToggle({ label, count, open, onToggle }) {
 function ItemRow({ item, onToggle, onMenu }) {
   return (
     <li className={`item ${item.checked ? 'done' : ''}`}>
-      <button className="item-check" onClick={onToggle} role="checkbox" aria-checked={item.checked}>
+      <button className="item-check" data-item={item.key} onClick={onToggle} role="checkbox" aria-checked={item.checked}>
         <span className="box" aria-hidden="true">{item.checked ? '✓' : ''}</span>
         <span className="item-text">
           {item.text}
@@ -64,6 +64,28 @@ export function TripScreen({ data, setData, go, today, tripId }) {
     else next.add(key)
     return next
   })
+
+  // Checking an item can remove its row (Hide completed, or the section
+  // collapsing). For keyboard users, move focus to the next unchecked item
+  // in that section, or to the collapsed heading, instead of losing it.
+  const refocus = useRef(null)
+  useEffect(() => {
+    const target = refocus.current
+    if (!target) return
+    refocus.current = null
+    const find = (attr, value) => [...document.querySelectorAll(`[${attr}]`)].find((el) => el.getAttribute(attr) === value)
+    if (find('data-item', target.from)) return
+    find(target.toggle ? 'data-toggle' : 'data-item', target.toggle ?? target.item)?.focus()
+  })
+  const check = (event, item, sectionItems, collapseKey) => {
+    if (event.detail === 0 && !item.checked) {
+      const i = sectionItems.indexOf(item)
+      const next = sectionItems.slice(i + 1).find((x) => !x.checked)
+        ?? sectionItems.slice(0, i).reverse().find((x) => !x.checked)
+      refocus.current = next ? { from: item.key, item: next.key } : { from: item.key, toggle: collapseKey }
+    }
+    setData((d) => toggleChecked(d, trip.id, item.key))
+  }
 
   const items = tripItems(data, trip)
   const comingHome = isComingHome(trip, today)
@@ -129,57 +151,57 @@ export function TripScreen({ data, setData, go, today, tripId }) {
 
       {order.map((cat) => {
         const catItems = items.filter((i) => i.category === cat.id)
-        const visibleCatItems = hideCompleted ? catItems.filter((i) => !i.checked) : catItems
         const catDone = catItems.filter((i) => i.checked).length
         const catFinished = catItems.length > 0 && catDone === catItems.length
         const catKey = `cat:${cat.id}`
-        if (catFinished && !opened.has(catKey)) {
+        const catOpen = opened.has(catKey)
+        if (catFinished && !catOpen) {
           return (
             <section key={cat.id} className="category">
               <h2 className="section-title">
-                <DoneToggle label={cat.label} count={catItems.length} open={false} onToggle={() => toggleOpen(catKey)} />
+                <DoneToggle toggleKey={catKey} label={cat.label} count={catItems.length} open={false} onToggle={() => toggleOpen(catKey)} />
               </h2>
             </section>
           )
         }
-        const groups = cat.id === 'pack'
-          ? groupPackItems(catItems)
-            .map((group) => ({
-              ...group,
-              visibleItems: hideCompleted ? group.items.filter((i) => !i.checked) : group.items,
-            }))
-            .filter((group) => group.visibleItems.length > 0)
-          : [{ group: null, items: catItems, visibleItems: visibleCatItems }]
+        // Hide completed applies to unfinished sections. A finished section the
+        // user opened shows all its items so they can be reviewed or unchecked.
+        const visible = (list) => (hideCompleted && !catFinished ? list.filter((i) => !i.checked) : list)
+        const groups = cat.id === 'pack' ? groupPackItems(catItems) : [{ group: null, items: catItems }]
         return (
           <section key={cat.id} className="category">
             <h2 className="section-title">
               {catFinished
-                ? <DoneToggle label={cat.label} count={catItems.length} open onToggle={() => toggleOpen(catKey)} />
+                ? <DoneToggle toggleKey={catKey} label={cat.label} count={catItems.length} open onToggle={() => toggleOpen(catKey)} />
                 : <>{cat.label}{catItems.length > 0 && <span className="muted"> {catDone}/{catItems.length}</span>}</>}
             </h2>
             <div className="card">
-              {groups.map(({ group, items: allGroupItems, visibleItems: groupItems }) => {
-                const groupDone = allGroupItems.filter((i) => i.checked).length
+              {groups.map(({ group, items: groupItems }) => {
+                const groupDone = groupItems.filter((i) => i.checked).length
                 // Inside an opened finished category, show everything in one tap.
-                const groupFinished = group && !catFinished && groupDone === allGroupItems.length
+                const groupFinished = group && !catFinished && groupDone === groupItems.length
                 const groupKey = `group:${group}`
-                const groupOpen = !groupFinished || opened.has(groupKey)
+                const groupOpen = groupFinished && opened.has(groupKey)
+                const shown = groupFinished ? (groupOpen ? groupItems : []) : visible(groupItems)
+                // Where focus goes if checking an item collapses this section.
+                const rest = catItems.filter((i) => !groupItems.includes(i))
+                const collapseKey = group && rest.some((i) => !i.checked) ? groupKey : catKey
                 return (
                   <div key={group ?? 'all'}>
                     {group && (
                       <h3 className="group-title in-card">
                         {groupFinished
-                          ? <DoneToggle label={group} count={allGroupItems.length} open={groupOpen} onToggle={() => toggleOpen(groupKey)} />
-                          : <>{group}<span className="muted"> {groupDone}/{allGroupItems.length}</span></>}
+                          ? <DoneToggle toggleKey={groupKey} label={group} count={groupItems.length} open={groupOpen} onToggle={() => toggleOpen(groupKey)} />
+                          : <>{group}<span className="muted"> {groupDone}/{groupItems.length}</span></>}
                       </h3>
                     )}
-                    {groupOpen && (
+                    {shown.length > 0 && (
                       <ul className="items">
-                        {groupItems.map((item) => (
+                        {shown.map((item) => (
                           <ItemRow
                             key={item.key}
                             item={item}
-                            onToggle={() => setData((d) => toggleChecked(d, trip.id, item.key))}
+                            onToggle={(e) => check(e, item, groupItems, collapseKey)}
                             onMenu={() => setMenuItem(item)}
                           />
                         ))}
@@ -188,9 +210,7 @@ export function TripScreen({ data, setData, go, today, tripId }) {
                   </div>
                 )
               })}
-              {catItems.length === 0
-                ? <p className="muted pad small">{cat.empty}</p>
-                : visibleCatItems.length === 0 && <p className="muted pad small">All {catDone} completed items are hidden.</p>}
+              {catItems.length === 0 && <p className="muted pad small">{cat.empty}</p>}
               <AddOneOff onAdd={(text) => setData((d) => addExtra(d, trip.id, cat.id, text))} />
             </div>
           </section>
