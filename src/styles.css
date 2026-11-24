@@ -553,3 +553,16 @@ section { margin-top: 20px; }
   border-top: 1px solid var(--border);
 }
 .card > div:first-child > .group-title.in-card { border-top: 0; }
+
+/* ---------- denser trip checklist (delete this block to revert) ---------- */
+
+.item-check { min-height: 44px; padding: 7px 0 7px 16px; gap: 10px; }
+.box { width: 22px; height: 22px; font-size: 13px; }
+.item-menu { width: 44px; }
+.category { margin-top: 14px; }
+.section-title { margin: 0 4px 6px; }
+.group-title.in-card { padding: 7px 16px 3px; }
+.add-row { padding: 3px 8px 3px 16px; }
+.add-row input { padding: 9px 0; }
+.banner { padding: 10px 14px; }
+.trip-footer { margin-top: 20px; }
