@@ -16,6 +16,48 @@ import { SyncScreen } from './screens/SyncScreen'
 import { LoadFailedScreen } from './screens/LoadFailedScreen'
 import { useCloudSync } from './useCloudSync.jsx'
 
+const TRIPS = { name: 'trips' }
+const SCREEN_KEY = 'travellist-screen'
+
+function pageToRemember(screen) {
+  if (screen?.name !== 'tripForm') return screen
+  return screen.id === undefined ? TRIPS : { name: 'trip', id: screen.id }
+}
+
+function loadScreen() {
+  try {
+    return pageToRemember(JSON.parse(localStorage.getItem(SCREEN_KEY)))
+  } catch {
+    return null
+  }
+}
+
+function saveScreen(screen) {
+  try {
+    const { name, id, returnTo } = pageToRemember(screen)
+    // Remember the page and its back destination. Editor sheets close on relaunch.
+    const back = returnTo?.name === 'trip' ? { name: 'trip', id: returnTo.id } : undefined
+    localStorage.setItem(SCREEN_KEY, JSON.stringify({ name, id, returnTo: back }))
+  } catch {
+    // The app can still navigate when device storage is unavailable.
+  }
+}
+
+function resolveScreen(screen, data) {
+  switch (screen?.name) {
+    case 'trip':
+      return data.trips.some((trip) => trip.id === screen.id) ? screen : TRIPS
+    case 'tripForm':
+    case 'master':
+    case 'help':
+    case 'dataBackup':
+    case 'sync':
+      return screen
+    default:
+      return TRIPS
+  }
+}
+
 export default function App() {
   const [workspace, setWorkspace] = useState(null)
   const workspaceRef = useRef(null)
@@ -23,8 +65,10 @@ export default function App() {
   const [error, setError] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [tabWaiting, setTabWaiting] = useState(false)
-  // screen: trips | trip | tripForm | master | help | dataBackup | sync
-  const [screen, setScreen] = useState({ name: 'trips' })
+  const [requestedScreen, go] = useState(null)
+  const ready = data !== null
+  const screen = ready ? resolveScreen(requestedScreen, data) : TRIPS
+  if (ready && screen !== requestedScreen) go(screen)
   const [notice, setNotice] = useState('')
   const [today, setToday] = useState(todayStr())
   const updateWorkspace = useCallback((update) => {
@@ -51,6 +95,8 @@ export default function App() {
     const controller = new AbortController()
     const load = async () => {
       try {
+        const savedScreen = loadScreen()
+        go((current) => current ?? savedScreen)
         const loaded = await loadWorkspace()
         if (!controller.signal.aborted) void updateWorkspace(() => loaded)
       } catch (e) {
@@ -107,7 +153,7 @@ export default function App() {
       CapApp.addListener('appStateChange', ({ isActive }) => isActive && refreshToday()),
       LocalNotifications.addListener('localNotificationActionPerformed', ({ notification }) => {
         const tripId = notification.extra?.tripId
-        if (tripId) setScreen({ name: 'trip', id: tripId })
+        if (tripId) go({ name: 'trip', id: tripId })
       }),
     ]
     return () => {
@@ -118,8 +164,9 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (ready) saveScreen(screen)
     window.scrollTo(0, 0) // returns a Promise in newer Chrome; don't hand it to React
-  }, [screen])
+  }, [ready, screen])
 
   useEffect(() => {
     if (!notice) return
@@ -154,19 +201,20 @@ export default function App() {
     )
   }
 
-  const go = setScreen
   const finishGoogleSignIn = () => {
     setNotice('Signed in with Google')
     go({ name: 'trips' })
   }
   const props = { data, setData, go, today }
   let body
-  if (screen.name === 'trip' && data.trips.some((t) => t.id === screen.id)) {
-    body = <TripScreen {...props} tripId={screen.id} />
+  if (screen.name === 'trip') {
+    body = <TripScreen {...props} key={screen.id} tripId={screen.id} />
   } else if (screen.name === 'tripForm') {
     body = <TripForm {...props} tripId={screen.id} />
   } else if (screen.name === 'master') {
-    body = <MasterScreen {...props} itemId={screen.itemId} returnTo={screen.returnTo} />
+    const returnTrip = screen.returnTo?.name === 'trip' && data.trips.find((trip) => trip.id === screen.returnTo.id)
+    const returnTo = returnTrip ? { name: 'trip', id: returnTrip.id, label: returnTrip.name || 'Trip' } : undefined
+    body = <MasterScreen {...props} itemId={screen.itemId} returnTo={returnTo} />
   } else if (screen.name === 'help') {
     body = <HelpScreen go={go} />
   } else if (screen.name === 'dataBackup') {

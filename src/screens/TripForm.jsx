@@ -4,6 +4,7 @@ import { newTrip, nightsLabel, nightsOf, saveTrip, tripConditions, updateTrip } 
 import { mergeTrip } from '../mergeData'
 
 export function TripForm({ data, setData, go, today, tripId }) {
+  const isEditing = tripId !== undefined
   const existing = data.trips.find((t) => t.id === tripId)
   const [initial] = useState(() => existing ?? newTrip(today))
   const [trip, setTrip] = useState(() => ({
@@ -31,19 +32,23 @@ export function TripForm({ data, setData, go, today, tripId }) {
     e.preventDefault()
     if (!ready) return
     const saved = { ...trip, name: trip.name.trim() }
-    setData((d) => tripId ? updateTrip(d, tripId, (current) => {
-      // A default answer was never selected, so keep a newer cloud answer.
-      const defaults = d.questions.filter(({ id }) => !Object.hasOwn(initial.answers, id) &&
-        !answered.current.has(id) && Object.hasOwn(current.answers, id))
-      const before = { ...initial, answers: { ...initial.answers, ...Object.fromEntries(defaults.map(({ id }) => [id, saved.answers[id]])) } }
-      return mergeTrip(before, saved, current)
-    }) : saveTrip(d, saved))
+    setData((d) => {
+      // Saving explicitly restores a trip that sync deleted during editing.
+      if (!isEditing || !d.trips.some((t) => t.id === tripId)) return saveTrip(d, saved)
+      return updateTrip(d, tripId, (current) => {
+        // A default answer was never selected, so keep a newer cloud answer.
+        const defaults = d.questions.filter(({ id }) => !Object.hasOwn(initial.answers, id) &&
+          !answered.current.has(id) && Object.hasOwn(current.answers, id))
+        const before = { ...initial, answers: { ...initial.answers, ...Object.fromEntries(defaults.map(({ id }) => [id, saved.answers[id]])) } }
+        return mergeTrip(before, saved, current)
+      })
+    })
     go({ name: 'trip', id: saved.id })
   }
 
   return (
     <main>
-      <TopBar title={existing ? 'Edit trip' : 'New trip'} onBack={back} backLabel="Cancel" />
+      <TopBar title={isEditing ? 'Edit trip' : 'New trip'} onBack={back} backLabel="Cancel" />
       <form onSubmit={save}>
         <section>
           <div className="card form-card">
@@ -53,7 +58,7 @@ export function TripForm({ data, setData, go, today, tripId }) {
                 value={trip.name}
                 onChange={(e) => set({ name: e.target.value })}
                 placeholder="Tahoe, Mom's, Chicago work trip…"
-                autoFocus={!existing}
+                autoFocus={!isEditing}
               />
             </label>
             <div className="field-row">
@@ -109,7 +114,7 @@ export function TripForm({ data, setData, go, today, tripId }) {
 
         <section>
           <button type="submit" className="btn primary wide" disabled={!ready}>
-            {existing ? 'Save' : 'Make my list'}
+            {isEditing ? 'Save' : 'Make my list'}
           </button>
           {datesValid && unanswered.length > 0 && (
             <p className="muted small center">
