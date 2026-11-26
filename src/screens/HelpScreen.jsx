@@ -6,7 +6,7 @@ export function HelpScreen({ go }) {
       <TopBar title="Car reminders" onBack={() => go({ name: 'trips' })} backLabel="Trips" />
       <section className="prose">
         <p>
-          On a trip's last day (or after you tap <b>Heading home</b>), TravelList can remind you of your
+          On a trip's last day (or after you tap <b>Heading home early</b>), TravelList can remind you of your
           Coming Home items every time your phone connects to the car. You set this up once in the
           Shortcuts app:
         </p>
@@ -20,7 +20,8 @@ export function HelpScreen({ go }) {
         </ol>
         <p>
           When no trip is coming home, it does nothing. When one is, you get a notification listing what's
-          left — until you check them off, end the trip, or three days after the return date. The trip stays open until you end it.
+          left. Tap <b>I'm home</b> to close the trip and stop these reminders. They also stop when you check
+          everything off or three days after your scheduled return date.
         </p>
         <p>
           You'll also get one notification at 8am on the last day, even without this automation.

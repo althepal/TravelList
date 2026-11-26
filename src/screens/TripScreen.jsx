@@ -183,22 +183,22 @@ export function TripScreen({ data, setData, go, today, tripId }) {
         </section>
       )}
 
-      {!trip.ended && (comingHome ? (
+      {comingHome && (
         <section className="banner home">
           <strong>Coming home</strong>
           <span>
             {Capacitor.isNativePlatform()
-              ? 'Car reminders stop when you check everything off, end the trip, or three days after return. The trip stays open until you end it.'
+              ? <>
+                  Tap <b>I'm home</b> to close the trip and stop car reminders. Reminders also stop when you
+                  check everything off or three days after your scheduled return date.
+                </>
               : 'Check these off before you get home.'}
           </span>
-          {trip.headingHome && <button className="link" onClick={() => patch({ headingHome: false })}>Not yet</button>}
+          {trip.headingHome && today < trip.end && (
+            <button className="link" onClick={() => patch({ headingHome: false })}>Not yet</button>
+          )}
         </section>
-      ) : today >= trip.start && (
-        <section className="banner">
-          <span>Leaving early? Turn on Coming Home reminders now.</span>
-          <button className="btn small" onClick={() => patch({ headingHome: true })}>Heading home</button>
-        </section>
-      ))}
+      )}
 
       {order.map((cat) => {
         const catItems = items.filter((i) => i.category === cat.id)
@@ -284,9 +284,12 @@ export function TripScreen({ data, setData, go, today, tripId }) {
       )}
 
       <section className="trip-footer">
+        {!trip.ended && !comingHome && today >= trip.start && (
+          <button className="btn" onClick={() => patch({ headingHome: true })}>Heading home early</button>
+        )}
         {trip.ended
           ? <button className="btn" onClick={() => patch({ ended: false })}>Reopen trip</button>
-          : <button className="btn" onClick={() => { patch({ ended: true }); go({ name: 'trips' }) }}>I'm home — end trip</button>}
+          : <button className="btn" onClick={() => { patch({ ended: true }); go({ name: 'trips' }) }}>I'm home</button>}
         <button
           className="btn danger-text"
           onClick={() => setConfirm({

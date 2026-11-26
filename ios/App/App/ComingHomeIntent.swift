@@ -8,7 +8,7 @@ import UserNotifications
 struct CheckComingHomeIntent: AppIntent {
     static var title: LocalizedStringResource = "Check Coming Home"
     static var description = IntentDescription(
-        "If a trip is on its last day or you tapped Heading Home, shows a notification with the Coming Home items still unchecked. Otherwise does nothing."
+        "If a trip is on its last day or you tapped Heading home early, shows a notification with the Coming Home items still unchecked. Otherwise does nothing."
     )
     static var openAppWhenRun = false
 

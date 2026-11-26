@@ -2,7 +2,7 @@
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { defaultData, newTemplate, newTrip, saveTrip } from '../model'
+import { addDays, defaultData, newTemplate, newTrip, saveTrip } from '../model'
 import { DEFAULT_PREFS, savePrefs } from '../prefs'
 import { TripScreen } from './TripScreen'
 
@@ -11,7 +11,7 @@ const SETTLE_MS = DEFAULT_PREFS.tapPause
 
 const roots = []
 
-function makeData({ checked = [] } = {}) {
+function makeData({ checked = [], headingHome = false } = {}) {
   const templates = [
     newTemplate('pack', { id: 'shirt', text: 'Shirt', group: 'Main' }),
     newTemplate('pack', { id: 'socks', text: 'Socks', group: 'Main' }),
@@ -24,21 +24,22 @@ function makeData({ checked = [] } = {}) {
     ...newTrip('2026-11-23'),
     id: 'trip',
     name: 'Test trip',
+    headingHome,
     checked: Object.fromEntries(checked.map((id) => [`t:${id}`, true])),
   }
   return saveTrip({ ...defaultData(), templates, questions: [] }, trip)
 }
 
-function Harness({ initial }) {
+function Harness({ initial, today }) {
   const [data, setData] = useState(initial)
-  return <TripScreen data={data} setData={setData} go={() => {}} today="2026-11-23" tripId="trip" />
+  return <TripScreen data={data} setData={setData} go={() => {}} today={today} tripId="trip" />
 }
 
-async function render(data) {
+async function render(data, today = '2026-11-23') {
   const node = document.body.appendChild(document.createElement('div'))
   const root = createRoot(node)
   roots.push({ node, root })
-  await act(async () => { root.render(<Harness initial={data} />) })
+  await act(async () => { root.render(<Harness initial={data} today={today} />) })
   return node
 }
 
@@ -61,6 +62,35 @@ afterEach(async () => {
   }
   vi.unstubAllGlobals()
   vi.useRealTimers()
+})
+
+it("puts Heading home early and I'm home in the trip footer", async () => {
+  const data = makeData()
+  const node = await render(data, data.trips[0].start)
+  const footer = node.querySelector('.trip-footer')
+  const [headingHome, imHome] = footer.querySelectorAll('button')
+  expect(headingHome.textContent).toBe('Heading home early')
+  expect(imHome.textContent).toBe("I'm home")
+
+  await click(headingHome)
+  expect(node.querySelector('.banner.home strong').textContent).toBe('Coming home')
+  expect(footer.textContent).not.toContain('Heading home early')
+  const undo = node.querySelector('.banner.home button')
+  expect(undo.textContent).toBe('Not yet')
+  await click(undo)
+  expect(node.querySelector('.banner.home')).toBeNull()
+  expect(footer.querySelector('button').textContent).toBe('Heading home early')
+
+  await click(imHome)
+  expect(footer.querySelector('button').textContent).toBe('Reopen trip')
+})
+
+it.each([0, 1])('hides Not yet %i days after the scheduled return date', async (daysAfterReturn) => {
+  const data = makeData({ headingHome: true })
+  const node = await render(data, addDays(data.trips[0].end, daysAfterReturn))
+  const banner = node.querySelector('.banner.home')
+  expect(banner.querySelector('strong').textContent).toBe('Coming home')
+  expect(banner.querySelector('button')).toBeNull()
 })
 
 it('starts with completed items hidden', async () => {
