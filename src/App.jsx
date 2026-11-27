@@ -82,6 +82,7 @@ export default function App() {
     return saved
   }, [])
 
+  // Run edits synchronously against the latest workspace, even before it has rendered.
   const setData = (update) => updateWorkspace((current) => {
     const updated = update(current.data)
     return updated === current.data ? current : { ...current, data: updated }

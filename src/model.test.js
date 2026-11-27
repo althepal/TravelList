@@ -70,12 +70,13 @@ describe('tripItems', () => {
     expect(qty(data, "Max's shirts")).toBe(4)
   })
 
-  it('asks Swimming only when summer-ish or flying', () => {
+  it('asks Swimming when summer-ish or flying unless its Auto yes rule (Harrison) matches', () => {
     const swim = defaultData().questions.find((q) => q.id === 'swim')
     const q = defaultData().questions
     expect(isAsked(swim, setup().trips[0], q)).toBe(false) // December, not flying
     expect(isAsked(swim, setup(summer).trips[0], q)).toBe(true)
     expect(isAsked(swim, setup({ answers: { fly: true } }).trips[0], q)).toBe(true)
+    expect(isAsked(swim, setup({ ...summer, answers: { harrison: true } }).trips[0], q)).toBe(false)
   })
 
   it('treats a trip that overlaps May as summer', () => {
@@ -89,8 +90,53 @@ describe('tripItems', () => {
     expect(texts(setup({ ...summer, answers: { swim: true } }))).toContain('Bathing suit')
     expect(texts(setup({ answers: { swim: true, fly: true } }))).toContain('Bathing suit')
     expect(texts(setup({ answers: { swim: true } }))).not.toContain('Bathing suit') // December, not flying
-    expect(texts(setup({ ...summer, answers: { harrison: true } }))).not.toContain('Bathing suit')
     expect(texts(setup({ ...summer, answers: { swim: true, max: true } }))).toContain("Max's bathing suit")
+  })
+
+  it('includes swimming gear at Harrison even when Swimming was not checked', () => {
+    const data = setup({ answers: { harrison: true, swim: false } })
+    expect(texts(data)).toEqual(expect.arrayContaining(['Bathing suit', 'Goggles']))
+    expect(texts(data)).not.toContain("Max's bathing suit")
+
+    const withMax = setup({ answers: { harrison: true, max: true } })
+    expect(texts(withMax)).toContain("Max's bathing suit")
+    expect(texts(setHidden(withMax, 'T', idOf(withMax, 'Goggles'), true))).not.toContain('Goggles')
+  })
+
+  it('uses the usual rules and saved answer again when Harrison stops matching', () => {
+    const swim = defaultData().questions.find((q) => q.id === 'swim')
+    const atHarrison = setup({ ...summer, answers: { harrison: true, swim: false } })
+    expect(texts(atHarrison)).toContain('Bathing suit')
+    const notHarrison = setup({ ...summer, answers: { harrison: false, swim: false } })
+    expect(isAsked(swim, notHarrison.trips[0], notHarrison.questions)).toBe(true)
+    expect(texts(notHarrison)).not.toContain('Bathing suit')
+    expect(texts(setup({ ...summer, answers: { harrison: false, swim: true } }))).toContain('Bathing suit')
+  })
+
+  it('follows Auto yes rules from the list, not built-in question ids', () => {
+    const withRules = (data, rules) => ({
+      ...data, questions: data.questions.map((q) => ({ ...q, autoYesIf: rules[q.id] ?? [] })),
+    })
+    // Without the rule, Harrison is an ordinary question.
+    const removed = withRules(setup({ answers: { harrison: true } }), {})
+    expect(texts(removed)).not.toContain('Bathing suit')
+    expect(isAsked(removed.questions.find((q) => q.id === 'swim'), { ...removed.trips[0], ...summer }, removed.questions)).toBe(true)
+
+    // Any question can have one, including from an auto condition.
+    const camping = withRules(setup(summer), { camping: ['auto:summer'] })
+    expect(texts(camping)).toContain('Sleeping bag')
+    expect(isAsked(camping.questions.find((q) => q.id === 'camping'), camping.trips[0], camping.questions)).toBe(false)
+  })
+
+  it('requires every condition in a group and accepts any matching group', () => {
+    const template = newTemplate('pack', {
+      text: 'Extra towel', conditionGroups: [{ all: ['max', 'swim'] }, { all: ['camping'] }],
+    })
+    const itemsWithAnswers = (answers) => texts(saveTemplate(setup({ answers }), template))
+    expect(itemsWithAnswers({ max: true })).not.toContain('Extra towel')
+    expect(itemsWithAnswers({ harrison: true })).not.toContain('Extra towel')
+    expect(itemsWithAnswers({ max: true, harrison: true })).toContain('Extra towel')
+    expect(itemsWithAnswers({ camping: true })).toContain('Extra towel')
   })
 
   it('hides items skipped for this trip and adds one-offs', () => {
@@ -107,7 +153,7 @@ describe('makePermanent', () => {
   it('moves a one-off to the master list and keeps its check mark', () => {
     let data = setup({ extras: [{ id: 'x1', category: 'pack', text: 'Ski boots' }] })
     data = toggleChecked(data, 'T', 'x:x1')
-    const template = newTemplate('pack', { text: 'Ski boots', when: ['auto:winter'], requires: 'max', group: 'Max', perDay: true })
+    const template = newTemplate('pack', { text: 'Ski boots', conditionGroups: [{ all: ['auto:winter', 'max'] }], group: 'Max', perDay: true })
     data = makePermanent(data, 'T', 'x1', template)
     expect(data.templates.at(-1)).toEqual(template)
     expect(data.trips[0].extras).toEqual([])
@@ -161,13 +207,28 @@ describe('edits', () => {
 })
 
 describe('deleteQuestion', () => {
-  it('removes the question from item conditions, "only if", follow-ups and answers', () => {
-    const data = deleteQuestion(deleteQuestion(setup({ answers: { max: true, fly: false } }), 'fly'), 'max')
-    expect(data.templates.find((t) => t.text === 'Passports').when).toEqual([])
-    expect(data.templates.find((t) => t.text === "Max's bathing suit"))
-      .toMatchObject({ when: ['swim', 'harrison'], requires: null })
+  it('keeps items without a surviving rule off trips and cleans up follow-ups and answers', () => {
+    const data = deleteQuestion(deleteQuestion(setup({ ...summer, answers: { max: true, fly: true, swim: true } }), 'fly'), 'max')
+    expect(texts(data)).not.toContain('Passports')
+    expect(texts(data)).not.toContain("Max's bathing suit")
+    expect(texts(data)).toContain('Bathing suit')
+    expect(texts(data)).toContain('Socks')
     expect(data.questions.find((q) => q.id === 'swim').askIf).toEqual(['auto:summer'])
-    expect(data.trips[0].answers).toEqual({})
+    expect(data.trips[0].answers).toEqual({ swim: true })
+  })
+
+  it('removes the question from Auto yes rules too', () => {
+    const data = deleteQuestion(setup(), 'harrison')
+    expect(data.questions.find((q) => q.id === 'swim').autoYesIf).toEqual([])
+  })
+
+  it('drops an affected group as a whole and keeps any other group', () => {
+    const template = newTemplate('pack', {
+      text: 'Extra towel', conditionGroups: [{ all: ['max', 'swim'] }, { all: ['camping'] }],
+    })
+    const data = deleteQuestion(saveTemplate(setup({ ...summer, answers: { swim: true } }), template), 'max')
+    expect(texts(data)).not.toContain('Extra towel')
+    expect(texts({ ...data, trips: [{ ...data.trips[0], answers: { camping: true } }] })).toContain('Extra towel')
   })
 })
 
@@ -230,13 +291,19 @@ describe('starter list', () => {
 })
 
 describe('questionDependencyCycle', () => {
-  const q = (id, askIf = []) => ({ id, text: `${id}?`, short: id, askIf })
+  const q = (id, askIf = [], autoYesIf = []) => ({ id, text: `${id}?`, short: id, askIf, autoYesIf })
   const loop = [q('a', ['b']), q('b', ['a', 'auto:summer']), q('c')]
 
   it('finds a loop and ignores self-dependencies and auto conditions', () => {
     expect(questionDependencyCycle(loop)).toEqual(['a', 'b', 'a'])
     expect(questionDependencyCycle([q('a', ['a', 'auto:winter']), q('b', ['a'])])).toBeNull()
     expect(questionDependencyCycle(defaultData().questions)).toBeNull()
+  })
+
+  it('follows Auto yes rules as well as Only ask when', () => {
+    const mixed = [q('a', ['b']), q('b', [], ['a'])]
+    expect(questionDependencyCycle(mixed)).toEqual(['a', 'b', 'a'])
+    expect(questionDependencyCycle([q('a', [], ['a'])])).toBeNull()
   })
 
   it('with a start question, reports only loops through it', () => {

@@ -21,7 +21,7 @@ vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: { addList
 
 import App from './App'
 import { ensureCloudData, observeAuth, listenForCloudData, saveCloudData } from './firebase'
-import { defaultData, newTrip, saveTrip } from './model'
+import { addExtra, defaultData, deleteQuestion, newTrip, saveTrip } from './model'
 import { keepUnreadableData, loadWorkspace, saveWorkspace } from './storage'
 import { newWorkspace } from './syncState'
 
@@ -94,6 +94,123 @@ it('reopens Trips after leaving the New trip form', async () => {
 
   const reopened = await open()
   expect(reopened.node.querySelector('h1').textContent).toBe('TravelList')
+})
+
+it.each(['before', 'after'])('adjusts pinned padding when the keyboard opens %s the sheet', async (when) => {
+  vi.stubGlobal('innerWidth', 390)
+  vi.stubGlobal('innerHeight', 844)
+  // The app measures the full window at launch; this stub comes after that.
+  window.dispatchEvent(new Event('resize'))
+  const viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0, scale: 1 })
+  vi.stubGlobal('visualViewport', viewport)
+  localStorage.setItem('travellist-screen', JSON.stringify({ name: 'master' }))
+  const { node } = await open()
+  const openSheet = () => act(async () => { node.querySelector('.topbar-side.right button').click() })
+  if (when === 'after') {
+    await openSheet()
+    expect(node.querySelector('.pinned-actions').classList.contains('keyboard-open')).toBe(false)
+  }
+
+  viewport.height = 540
+  vi.stubGlobal('innerHeight', 540)
+  window.dispatchEvent(new Event('resize'))
+  viewport.dispatchEvent(new Event('resize'))
+  if (when === 'before') await openSheet()
+  const sheet = node.querySelector('.pinned-actions')
+  expect(sheet.classList.contains('keyboard-open')).toBe(true)
+  expect(sheet.style.getPropertyValue('--sheet-viewport-height')).toBe('540px')
+
+  vi.stubGlobal('innerHeight', 844)
+  Object.assign(viewport, { height: 422, scale: 2 })
+  viewport.dispatchEvent(new Event('resize'))
+  expect(sheet.classList.contains('keyboard-open')).toBe(false)
+})
+
+it('warns before removing an item rule and lets the user assign a new rule', async () => {
+  localStorage.setItem('travellist-screen', JSON.stringify({ name: 'master' }))
+  const { node } = await open()
+  const button = (selector, text) => [...node.querySelectorAll(selector)].find((el) => el.textContent.includes(text))
+  const click = (el) => act(async () => { el.click() })
+  await click(button('.tabs button', 'Questions'))
+  await click(button('.list-row', 'Flying?'))
+  await click(button('.sheet-actions button', 'Delete'))
+  expect(node.querySelector('[role=dialog]').textContent).toContain('Items that lose their last rule stay off trips')
+  await click(button('.sheet-actions button', 'Delete'))
+  await click(button('.tabs button', 'Pack'))
+
+  const passport = button('.list-row', 'Passports')
+  expect(passport.textContent).toContain('Never')
+  await click(passport)
+  await click(button('.item-conditions button', 'Camping'))
+  await click(button('.sheet-actions button', 'Save'))
+  expect(button('.list-row', 'Passports').textContent).toContain('Camping')
+})
+
+it('shows Auto yes rules and offers to add one to other questions', async () => {
+  localStorage.setItem('travellist-screen', JSON.stringify({ name: 'master' }))
+  const { node } = await open()
+  const button = (selector, text) => [...node.querySelectorAll(selector)].find((el) => el.textContent.includes(text))
+  const click = (el) => act(async () => { el.click() })
+  await click(button('.tabs button', 'Questions'))
+  expect(button('.list-row', 'Swimming?').textContent).toContain('Auto yes: Harrison')
+
+  await click(button('.list-row', 'Swimming?'))
+  expect(node.querySelector('[role=dialog]').textContent).toContain('Auto yes when')
+  await click(button('.sheet-head button', 'Close'))
+
+  await click(button('.list-row', 'Going to Harrison?'))
+  expect(node.querySelector('[role=dialog]').textContent).not.toContain('Auto yes when')
+  await click(button('[role=dialog] button', 'Add auto yes'))
+  const autoYes = [...node.querySelectorAll('fieldset')].find((el) => el.textContent.includes('Auto yes when'))
+  await click([...autoYes.querySelectorAll('button')].find((el) => el.textContent === 'Swimming?'))
+  await click(button('.sheet-actions button', 'Save'))
+  expect(node.querySelector('[role=alert]').textContent).toContain('loop')
+})
+
+it('blocks a question edit that would form a loop with a just-synced rule', async () => {
+  loadWorkspace.mockResolvedValue(newWorkspace(recovered, user))
+  ensureCloudData.mockResolvedValue({ data: recovered, restoreId: null })
+  localStorage.setItem('travellist-screen', JSON.stringify({ name: 'master' }))
+  const { node } = await open()
+  await act(async () => { authChanged(user) })
+  const receiveCloudUpdate = listenForCloudData.mock.lastCall[1]
+  const button = (selector, text) => [...node.querySelectorAll(selector)].find((el) => el.textContent.includes(text))
+  const click = (el) => act(async () => { el.click() })
+  await click(button('.tabs button', 'Questions'))
+  await click(button('.list-row', 'Camping?'))
+  await click(button('[role=dialog] button', 'Add auto yes'))
+  const autoYes = [...node.querySelectorAll('fieldset')].find((el) => el.textContent.includes('Auto yes when'))
+  await click([...autoYes.querySelectorAll('button')].find((el) => el.textContent === 'Going to Harrison?'))
+
+  const questions = recovered.questions.map((q) => q.id === 'harrison' ? { ...q, askIf: ['camping'] } : q)
+  await act(async () => {
+    receiveCloudUpdate({ data: { ...recovered, questions }, restoreId: null })
+    button('.sheet-actions button', 'Save').click()
+  })
+  expect(node.querySelector('[role=alert]').textContent).toMatch(/Camping\? → Going to Harrison\? → Camping\?/)
+  expect(saveWorkspace.mock.lastCall[0].data.questions).toEqual(questions)
+})
+
+it('drops a deleted question from a one-off saved to the master list', async () => {
+  const tripId = recovered.trips[0].id
+  const data = addExtra(recovered, tripId, 'pack', 'Camp chair')
+  loadWorkspace.mockResolvedValue(newWorkspace(data, user))
+  ensureCloudData.mockResolvedValue({ data, restoreId: null })
+  localStorage.setItem('travellist-screen', JSON.stringify({ name: 'trip', id: tripId }))
+  const { node } = await open()
+  await act(async () => { authChanged(user) })
+  const receiveCloudUpdate = listenForCloudData.mock.lastCall[1]
+  const button = (selector, text) => [...node.querySelectorAll(selector)].find((el) => el.textContent.includes(text))
+  const click = (el) => act(async () => { el.click() })
+  await click(node.querySelector('[aria-label="Options for Camp chair"]'))
+  await click(button('.sheet-menu button', 'Add to master list'))
+  await click(button('.item-conditions button', 'Camping'))
+  await act(async () => { receiveCloudUpdate({ data: deleteQuestion(data, 'camping'), restoreId: null }) })
+  await click(button('.sheet-actions button', 'Save'))
+
+  const saved = saveWorkspace.mock.lastCall[0].data
+  expect(saved.templates.find((t) => t.text === 'Camp chair').conditionGroups).toEqual([{ all: ['auto:never'] }])
+  expect(saved.trips[0].extras).toEqual([])
 })
 
 it('reopens the trip checklist after leaving the Edit trip form', async () => {

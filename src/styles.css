@@ -352,6 +352,11 @@ section { margin-top: 20px; }
 .conditions { border: 0; padding: 0; margin: 16px 0 0; }
 .conditions legend { font-size: 14px; color: var(--muted); font-weight: 500; margin-bottom: 8px; padding: 0; }
 .conditions p { margin: 8px 0 0; }
+.item-conditions .link:disabled { opacity: 0.5; cursor: default; }
+.condition-group + .condition-group { margin-top: 12px; }
+.condition-group-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.condition-group-head .link { margin-inline-start: auto; }
+.condition-summary { align-items: center; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
@@ -363,7 +368,6 @@ section { margin-top: 20px; }
 }
 .chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .chip.ghost { padding: 2px 8px; font-size: 13px; color: var(--muted); background: none; }
-.chip.ghost.strong { color: var(--text); border-color: var(--muted); }
 
 /* ---------- tabs ---------- */
 
@@ -454,6 +458,31 @@ section { margin-top: 20px; }
 .sheet-menu { display: grid; gap: 10px; margin-top: 8px; }
 .sheet-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .sheet-actions .btn { flex: 1; }
+
+.sheet-backdrop.pinned-actions {
+  top: var(--sheet-viewport-top, 0px);
+  bottom: auto;
+  height: var(--sheet-viewport-height, 100%);
+}
+.pinned-actions .sheet,
+.pinned-actions .sheet > form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pinned-actions .sheet { max-height: min(100%, max(88%, 240px)); overflow: hidden; }
+.pinned-actions.keyboard-open .sheet { padding-bottom: 20px; }
+.pinned-actions .sheet-head,
+.pinned-actions .sheet-error,
+.pinned-actions .sheet-actions { flex: none; }
+.pinned-actions .sheet-actions { margin-top: 12px; }
+.pinned-actions .sheet-fields {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-inline: -4px;
+  padding-inline: 4px;
+}
+.sheet-error { margin: 8px 0 0; max-height: 4.2em; overflow: auto; overflow-wrap: anywhere; }
 
 @media (min-width: 700px) {
   .sheet-backdrop { align-items: center; }

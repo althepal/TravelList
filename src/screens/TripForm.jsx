@@ -3,6 +3,8 @@ import { TopBar } from '../components'
 import { newTrip, nightsLabel, nightsOf, saveTrip, tripConditions, updateTrip } from '../model'
 import { mergeTrip } from '../mergeData'
 
+const validDates = (start, end) => start && end && end >= start
+
 export function TripForm({ data, setData, go, today, tripId }) {
   const isEditing = tripId !== undefined
   const existing = data.trips.find((t) => t.id === tripId)
@@ -12,17 +14,22 @@ export function TripForm({ data, setData, go, today, tripId }) {
     answers: Object.fromEntries(data.questions.map((q) => [q.id, initial.answers[q.id] ?? false])),
   }))
   const answered = useRef(new Set())
+  const [lastValidDates, setLastValidDates] = useState(() => ({ start: initial.start, end: initial.end }))
   const set = (patch) => setTrip((t) => ({ ...t, ...patch }))
+  const setDates = (start, end) => {
+    set({ start, end })
+    if (validDates(start, end)) setLastValidDates({ start, end })
+  }
   const setAnswer = (qid, v) => {
     answered.current.add(qid)
     setTrip((t) => ({ ...t, answers: { ...t.answers, [qid]: v } }))
   }
 
-  const datesValid = trip.start && trip.end && trip.end >= trip.start
+  const datesValid = validDates(trip.start, trip.end)
   // Every question needs an explicit answer: a missed "Bringing Max?" shouldn't silently mean no.
   // Follow-up questions appear as answers come in, e.g. Swimming? after Flying: yes.
-  const conditions = datesValid ? tripConditions(trip, data.questions) : null
-  const asked = data.questions.filter((q) => conditions ? conditions.isAsked(q) : q.askIf.length === 0)
+  const conditions = tripConditions(datesValid ? trip : { ...trip, ...lastValidDates }, data.questions)
+  const asked = data.questions.filter(conditions.isAsked)
   const unanswered = asked.filter((q) => typeof trip.answers[q.id] !== 'boolean')
   const ready = datesValid && unanswered.length === 0
   const nights = datesValid ? nightsOf(trip) : 0
@@ -31,7 +38,13 @@ export function TripForm({ data, setData, go, today, tripId }) {
   const save = (e) => {
     e.preventDefault()
     if (!ready) return
-    const saved = { ...trip, name: trip.name.trim() }
+    // A question the form didn't show (Auto yes, or not asked) keeps an earlier
+    // answer but doesn't save its pre-filled No: if it's asked later, the trip
+    // should ask for an answer instead of assuming one.
+    const shown = new Set(asked.map((q) => q.id))
+    const answers = Object.fromEntries(Object.entries(trip.answers).filter(([id]) =>
+      shown.has(id) || Object.hasOwn(initial.answers, id) || answered.current.has(id)))
+    const saved = { ...trip, name: trip.name.trim(), answers }
     setData((d) => {
       // Saving explicitly restores a trip that sync deleted during editing.
       if (!isEditing || !d.trips.some((t) => t.id === tripId)) return saveTrip(d, saved)
@@ -69,14 +82,14 @@ export function TripForm({ data, setData, go, today, tripId }) {
                   value={trip.start}
                   onChange={(e) => {
                     const start = e.target.value
-                    set(trip.end < start ? { start, end: start } : { start })
+                    setDates(start, trip.end < start ? start : trip.end)
                   }}
                   required
                 />
               </label>
               <label className="field">
                 <span>Back</span>
-                <input type="date" value={trip.end} min={trip.start} onChange={(e) => set({ end: e.target.value })} required />
+                <input type="date" value={trip.end} min={trip.start} onChange={(e) => setDates(trip.start, e.target.value)} required />
               </label>
             </div>
             <p className="muted small">

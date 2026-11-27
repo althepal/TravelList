@@ -3,19 +3,18 @@
 // this file only affects new installs.
 export function starterLists() {
   const questions = [
-    { id: 'max', text: 'Bringing Max?', short: 'Max', askIf: [] },
-    { id: 'harrison', text: 'Going to Harrison?', short: 'Harrison', askIf: [] },
-    { id: 'camping', text: 'Camping?', short: 'Camping', askIf: [] },
-    { id: 'fly', text: 'Flying?', short: 'Flying', askIf: [] },
-    { id: 'swim', text: 'Swimming?', short: 'Swimming', askIf: ['auto:summer', 'fly'] },
+    { id: 'max', text: 'Bringing Max?', short: 'Max', askIf: [], autoYesIf: [] },
+    { id: 'harrison', text: 'Going to Harrison?', short: 'Harrison', askIf: [], autoYesIf: [] },
+    { id: 'camping', text: 'Camping?', short: 'Camping', askIf: [], autoYesIf: [] },
+    { id: 'fly', text: 'Flying?', short: 'Flying', askIf: [], autoYesIf: [] },
+    { id: 'swim', text: 'Swimming?', short: 'Swimming', askIf: ['auto:summer', 'fly'], autoYesIf: ['harrison'] },
   ]
   // Ids come from the text so they stay put when this list changes.
-  const t = (category, group, text, when = [], extra = {}) => ({
+  const t = (category, group, text, all = [], extra = {}) => ({
     id: `s-${text.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-    category, group, text, when, requires: null, perDay: false, ...extra,
+    category, group, text, conditionGroups: all.length ? [{ all }] : [], perDay: false, ...extra,
   })
-  const pack = (group, text, when, extra) => t('pack', group, text, when, extra)
-  const max = { requires: 'max' }
+  const pack = (group, text, all, extra) => t('pack', group, text, all, extra)
   const perDay = { perDay: true }
   const templates = [
     pack('Main', 'Underwear', [], perDay),
@@ -39,11 +38,11 @@ export function starterLists() {
     pack('Main', 'Laptop / case'),
 
     ...["Max's pants / shorts", "Max's shirts", "Max's underwear", "Max's socks"]
-      .map((text) => pack('Max', text, [], { ...max, ...perDay })),
+      .map((text) => pack('Max', text, ['max'], perDay)),
     ...["Max's pajamas", "Max's toothbrush", "Max's iPad", "Max's iPad charger"]
-      .map((text) => pack('Max', text, [], max)),
-    pack('Max', "Max's Crocs", [], max),
-    pack('Max', "Max's bathing suit", ['swim', 'harrison'], max),
+      .map((text) => pack('Max', text, ['max'])),
+    pack('Max', "Max's Crocs", ['max']),
+    pack('Max', "Max's bathing suit", ['max', 'swim']),
 
     ...['Sleeping bag', 'Sleeping pad', 'Tent', 'Pillow', 'Hiking boots', 'Teva shoes',
       'Headlamp', 'Flashlight', 'Knife', 'TP', 'Chair', 'Food', 'Electrolytes', 'Cup', 'Spoon',
@@ -53,8 +52,8 @@ export function starterLists() {
 
     pack('Main', 'Goggles', ['swim']),
     // Keeps the id from when it was "baseball glove" so trip check marks survive.
-    pack('Max', "Max's baseball mitt", ['harrison'], { ...max, id: 's-max-s-baseball-glove' }),
-    pack('Max', "Max's football gloves", ['harrison'], max),
+    pack('Max', "Max's baseball mitt", ['max', 'harrison'], { id: 's-max-s-baseball-glove' }),
+    pack('Max', "Max's football gloves", ['max', 'harrison']),
 
     pack('Main', 'Passports', ['fly']),
     pack('Main', 'Sunglasses', ['fly']),

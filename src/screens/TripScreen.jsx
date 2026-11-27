@@ -3,7 +3,7 @@ import { Capacitor } from '@capacitor/core'
 import { ConfirmSheet, Sheet, TopBar } from '../components'
 import {
   addExtra, CATEGORIES, deleteTrip, formatRange, groupPackItems, isComingHome, makePermanent, newTemplate, nightsLabel,
-  removeExtra, setHidden, toggleChecked, tripConditions, tripItems, updateTrip,
+  removeExtra, setHidden, templateWithExistingConditions, toggleChecked, tripConditions, tripItems, updateTrip,
 } from '../model'
 import { loadPrefs } from '../prefs'
 import { TemplateSheet } from './TemplateSheet'
@@ -68,7 +68,6 @@ export function TripScreen({ data, setData, go, today, tripId }) {
     return next
   })
 
-  // Set on the home screen; read once when the trip opens.
   const [{ hideDelay, tapPause }] = useState(loadPrefs)
 
   // Recently checked items still shown crossed out; each has a timer.
@@ -340,7 +339,7 @@ export function TripScreen({ data, setData, go, today, tripId }) {
           template={promoting.template}
           title="Add to master list"
           onSave={(template) => {
-            setData((d) => makePermanent(d, trip.id, promoting.extraId, template))
+            setData((d) => makePermanent(d, trip.id, promoting.extraId, templateWithExistingConditions(template, d.questions)))
             setPromoting(null)
           }}
           onClose={() => setPromoting(null)}

@@ -7,7 +7,7 @@ import { starterLists } from './starter'
 
 // Bump when the document's shape changes, and add a matching upgrade step in
 // parseData.js. A build refuses to sync with a cloud copy newer than this.
-export const DATA_VERSION = 2
+export const DATA_VERSION = 4
 
 export const CATEGORIES = [
   { id: 'pack', label: 'Pack', empty: 'Nothing to pack yet.' },
@@ -25,6 +25,7 @@ export const AUTO_CONDITIONS = [
   { id: 'auto:summer', text: 'Summer-ish (May–Sep)' },
   { id: 'auto:long', text: 'More than 3 days' },
 ]
+export const NEVER_CONDITION = { id: 'auto:never', text: 'Never' }
 
 export function newId() {
   return globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)
@@ -98,53 +99,68 @@ function autoFlags(trip) {
   }
 }
 
+// The conditions a question's other settings depend on: `askIf` (only ask
+// when any holds) and `autoYesIf` (count as yes, without asking, when any holds).
+export const questionDependencies = (q) => [...q.askIf, ...q.autoYesIf]
+
 // Answers a trip's condition questions. Build it once per trip and reuse it
 // for every item and question.
 //
 // A condition is an auto condition ('auto:summer') or a question id, which
-// holds when that question is asked on this trip and answered yes.
+// holds when that question is automatically yes on this trip, or is asked and
+// answered yes.
 export function tripConditions(trip, questions) {
   const flags = autoFlags(trip)
   const byId = new Map(questions.map((q) => [q.id, q]))
-  const askedCache = new Map()
+  const cache = new Map()
   const evaluating = new Set()
-  // A question with `askIf` is only asked when any of those conditions holds,
-  // e.g. "Swimming?" only when it's summer-ish or flying.
-  // Treat any malformed dependency cycle as not asked instead of recursing
-  // forever. The editor and parseData also reject new cycles.
-  const isAsked = (q) => {
-    if (askedCache.has(q.id)) return askedCache.get(q.id)
-    if (evaluating.has(q.id)) return false
-    evaluating.add(q.id)
-    const conditions = q.askIf.filter((c) => c !== q.id)
-    const result = conditions.length === 0 || conditions.some(holds)
-    evaluating.delete(q.id)
-    askedCache.set(q.id, result)
+  // Treat any malformed dependency cycle as false instead of recursing
+  // forever. The editor, imports and sync also reject new cycles.
+  const once = (key, compute) => {
+    if (cache.has(key)) return cache.get(key)
+    if (evaluating.has(key)) return false
+    evaluating.add(key)
+    const result = compute()
+    evaluating.delete(key)
+    cache.set(key, result)
     return result
   }
+  // e.g. "Swimming?" counts as yes, and isn't asked, when going to Harrison.
+  // Nothing is saved, so the usual rules and answer return if Harrison stops matching.
+  const isAutoYes = (q) => once(`yes:${q.id}`, () =>
+    q.autoYesIf.some((c) => c !== q.id && holds(c)))
+  // A question with `askIf` is only asked when any of those conditions holds,
+  // e.g. "Swimming?" only when it's summer-ish or flying.
+  const meetsAskIf = (q) => once(`ask:${q.id}`, () => {
+    const conditions = q.askIf.filter((c) => c !== q.id)
+    return conditions.length === 0 || conditions.some(holds)
+  })
   // An answer to a question that's no longer asked (dates moved) counts as no.
   const holds = (cond) => {
     if (cond.startsWith('auto:')) return !!flags[cond]
     const q = byId.get(cond)
-    return !!q && isAsked(q) && trip.answers[cond] === true
+    return !!q && (isAutoYes(q) || (meetsAskIf(q) && trip.answers[cond] === true))
   }
-  // An item shows when its `requires` condition (if any) is true AND any of
-  // its `when` conditions is true (or `when` is empty). E.g. Max's bathing
-  // suit: requires Max, when Swimming.
+
+  // Match every condition in at least one group. No groups means every trip.
   const applies = (template) =>
-    (!template.requires || holds(template.requires)) &&
-    (template.when.length === 0 || template.when.some(holds))
-  return { holds, isAsked, applies }
+    template.conditionGroups.length === 0 || template.conditionGroups.some(({ all }) => all.every(holds))
+  return {
+    holds,
+    isAsked: (q) => !isAutoYes(q) && meetsAskIf(q),
+    applies,
+  }
 }
 
 // Returns a loop of question ids (first id repeated at the end, e.g.
-// ['a', 'b', 'a']) or null. With `startId`, only loops through that question
-// count. Each question is explored once, so this stays linear in the number of
-// questions and conditions however they're linked.
+// ['a', 'b', 'a']) or null, following both `askIf` and `autoYesIf`. With
+// `startId`, only loops through that question count. Each question is explored
+// once, so this stays linear in the number of questions and conditions however
+// they're linked.
 export function questionDependencyCycle(questions, startId) {
   const byId = new Map(questions.map((question) => [question.id, question]))
   // Like the trip evaluator, ignore a question depending on itself.
-  const depsOf = (id) => byId.get(id).askIf.filter((c) =>
+  const depsOf = (id) => questionDependencies(byId.get(id)).filter((c) =>
     c !== id && !c.startsWith('auto:') && byId.has(c))
   const onPath = new Set()
   const explored = new Set() // fully searched; no reportable loop from here
@@ -179,6 +195,7 @@ export function isAsked(question, trip, questions) {
 }
 
 export function conditionLabel(cond, questions) {
+  if (cond === NEVER_CONDITION.id) return NEVER_CONDITION.text
   const auto = AUTO_CONDITIONS.find((a) => a.id === cond)
   if (auto) return auto.text
   return questions.find((q) => q.id === cond)?.short ?? '?'
@@ -313,16 +330,43 @@ export function saveQuestion(data, question) {
   return { ...data, questions: upsert(data.questions, question) }
 }
 
+// Losing the last group leaves the item off trip lists. An item with no rules
+// to begin with still goes on every trip.
+export function filterConditionGroups(groups, keep) {
+  const remaining = groups.filter(keep)
+  return groups.length > 0 && remaining.length === 0 ? [{ all: [NEVER_CONDITION.id] }] : remaining
+}
+
+// A draft opened before sync deleted a question can still name it. Saving
+// applies the same cleanup as the deletion; auto conditions always exist.
+const conditionExists = (questions) => {
+  const ids = new Set(questions.map((q) => q.id))
+  return (cond) => cond.startsWith('auto:') || ids.has(cond)
+}
+
+export function withExistingConditions(question, questions) {
+  const exists = conditionExists(questions)
+  return { ...question, askIf: question.askIf.filter(exists), autoYesIf: question.autoYesIf.filter(exists) }
+}
+
+export function templateWithExistingConditions(template, questions) {
+  const exists = conditionExists(questions)
+  return { ...template, conditionGroups: filterConditionGroups(template.conditionGroups, ({ all }) => all.every(exists)) }
+}
+
 export function deleteQuestion(data, questionId) {
   return {
     ...data,
     questions: data.questions
       .filter((q) => q.id !== questionId)
-      .map((q) => ({ ...q, askIf: q.askIf.filter((c) => c !== questionId) })),
+      .map((q) => ({
+        ...q,
+        askIf: q.askIf.filter((c) => c !== questionId),
+        autoYesIf: q.autoYesIf.filter((c) => c !== questionId),
+      })),
     templates: data.templates.map((t) => ({
       ...t,
-      when: t.when.filter((c) => c !== questionId),
-      requires: t.requires === questionId ? null : t.requires,
+      conditionGroups: filterConditionGroups(t.conditionGroups, ({ all }) => !all.includes(questionId)),
     })),
     trips: data.trips.map((t) => ({ ...t, answers: without(t.answers, questionId) })),
   }
@@ -332,14 +376,14 @@ export function deleteQuestion(data, questionId) {
 
 export function newTemplate(category, fields = {}) {
   return {
-    id: newId(), category, text: '', when: [], requires: null,
+    id: newId(), category, text: '', conditionGroups: [],
     group: category === 'pack' ? 'Main' : null, perDay: false,
     ...fields,
   }
 }
 
 export function newQuestion() {
-  return { id: newId(), text: '', short: '', askIf: [] }
+  return { id: newId(), text: '', short: '', askIf: [], autoYesIf: [] }
 }
 
 export function newTrip(today = todayStr()) {

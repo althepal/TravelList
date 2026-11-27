@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { equalValues, mergeData } from './mergeData'
-import { addExtra, defaultData, deleteQuestion, deleteTemplate, deleteTrip, newTrip, removeExtra, saveTrip, toggleChecked, updateTrip } from './model'
+import { addExtra, defaultData, deleteQuestion, deleteTemplate, deleteTrip, newTemplate, newTrip, removeExtra, saveTemplate, saveTrip, toggleChecked, tripItems, updateTrip } from './model'
 import { parseData } from './parseData'
 import { acknowledgeBatch, acceptCloud, hasUnsyncedChanges, newWorkspace, planCloudWrite, prepareBatch } from './syncState'
 
@@ -55,6 +55,16 @@ describe('mergeData', () => {
     expect(mergeData(original, local, cloud).trips[0]).toMatchObject({ checked: {}, answers: {}, hidden: {}, extras: [] })
   })
 
+  it('keeps a concurrent item rule for a deleted question from becoming unconditional', () => {
+    const template = newTemplate('pack', { conditionGroups: [{ all: ['fly', 'max'] }], text: 'Extra bag' })
+    const local = saveTemplate(base, template)
+    const cloud = deleteQuestion(base, 'fly')
+    const merged = mergeData(base, local, cloud)
+    const tripWithMax = { ...trip, answers: { max: true } }
+    expect(tripItems(merged, tripWithMax).map(({ text }) => text)).not.toContain('Extra bag')
+    expect(parseData(merged, { imported: true })).toEqual(merged)
+  })
+
   it('keeps a valid pair of dates when both clients change a date', () => {
     const local = updateTrip(base, trip.id, (item) => ({ ...item, start: '2026-12-03' }))
     const cloud = updateTrip(base, trip.id, (item) => ({ ...item, end: '2026-12-01' }))
@@ -77,10 +87,22 @@ describe('mergeData', () => {
   })
 
   it('keeps the cloud dependency when combining two valid edits would create a cycle', () => {
-    const a = { id: 'a', text: 'A?', short: 'A', askIf: [] }
-    const b = { id: 'b', text: 'B?', short: 'B', askIf: [] }
+    const a = { id: 'a', text: 'A?', short: 'A', askIf: [], autoYesIf: [] }
+    const b = { id: 'b', text: 'B?', short: 'B', askIf: [], autoYesIf: [] }
     const original = { ...base, questions: [a, b] }
     const local = { ...original, questions: [{ ...a, text: 'Edited A?', askIf: ['b'] }, b] }
+    const cloud = { ...original, questions: [a, { ...b, askIf: ['a'] }] }
+    const merged = mergeData(original, local, cloud)
+    expect(parseData(merged, { imported: true }).questions).toEqual([
+      { ...a, text: 'Edited A?' }, { ...b, askIf: ['a'] },
+    ])
+  })
+
+  it('also keeps the cloud dependency when an Auto yes rule would complete the cycle', () => {
+    const a = { id: 'a', text: 'A?', short: 'A', askIf: [], autoYesIf: [] }
+    const b = { id: 'b', text: 'B?', short: 'B', askIf: [], autoYesIf: [] }
+    const original = { ...base, questions: [a, b] }
+    const local = { ...original, questions: [{ ...a, text: 'Edited A?', autoYesIf: ['b'] }, b] }
     const cloud = { ...original, questions: [a, { ...b, askIf: ['a'] }] }
     const merged = mergeData(original, local, cloud)
     expect(parseData(merged, { imported: true }).questions).toEqual([

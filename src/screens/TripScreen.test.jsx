@@ -60,6 +60,7 @@ afterEach(async () => {
     await act(async () => { root.unmount() })
     node.remove()
   }
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
 })

@@ -3,6 +3,7 @@
 // synced data. Lost or unreadable values fall back to the defaults.
 
 const KEY = 'travellist-prefs'
+export const SHOW_TIMING_SETTINGS = false
 
 // How long a newly checked item stays on screen, crossed out, before Hide
 // completed removes it (or its finished section collapses).

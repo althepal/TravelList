@@ -46,19 +46,24 @@ function mergeItems(base, local, cloud, merge = mergeFields) {
   return merged
 }
 
+// The question fields that link it to other questions.
+const pickDependencies = ({ askIf, autoYesIf }) => ({ askIf, autoYesIf })
+
 function mergeQuestions(base, local, cloud) {
   const merged = mergeItems(base, local, cloud)
   if (!questionDependencyCycle(merged)) return merged
 
-  // Keep the cloud dependencies for any change that would introduce a loop.
-  // Question text and other independent edits still merge.
+  // Keep the cloud dependencies (Only ask when and Auto yes when) for any
+  // change that would introduce a loop. Question text and other independent
+  // edits still merge.
   const cloudQuestions = indexItems(cloud)
-  const questions = [...indexItems(merged)].map(([key, question]) => ({
-    ...question, askIf: cloudQuestions.get(key)?.askIf ?? [],
-  }))
+  const questions = [...indexItems(merged)].map(([key, question]) => {
+    const previous = cloudQuestions.get(key)
+    return { ...question, ...(previous ? pickDependencies(previous) : { askIf: [], autoYesIf: [] }) }
+  })
   for (const [index, question] of merged.entries()) {
     const previous = questions[index]
-    if (equalValues(previous.askIf, question.askIf)) continue
+    if (equalValues(pickDependencies(previous), pickDependencies(question))) continue
     questions[index] = question
     if (questionDependencyCycle(questions, question.id)) questions[index] = previous
   }

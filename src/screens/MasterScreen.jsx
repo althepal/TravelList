@@ -1,53 +1,54 @@
-import { useState } from 'react'
-import { ConditionPicker, ConfirmSheet, Sheet, TopBar } from '../components'
+import { Fragment, useState } from 'react'
+import { ConfirmSheet, QuestionAutoYesPicker, QuestionConditionPicker, Sheet, TopBar } from '../components'
 import {
   CATEGORIES, conditionLabel, deleteQuestion, deleteTemplate, groupPackItems, newQuestion, newTemplate,
-  questionDependencyCycle, saveQuestion, saveTemplate,
+  questionDependencyCycle, saveQuestion, saveTemplate, templateWithExistingConditions, withExistingConditions,
 } from '../model'
 import { TemplateSheet } from './TemplateSheet'
 import { mergeFields, mergeTemplate } from '../mergeData'
 
 const TABS = [...CATEGORIES, { id: 'questions', label: 'Questions' }]
 
-function QuestionSheet({ question, questions, isNew, onSave, onDelete, onClose }) {
+export function QuestionSheet({ question, questions, isNew, onSave, onDelete, onClose, pinned }) {
   const [q, setQ] = useState(question)
   const [validationError, setValidationError] = useState('')
+  const [showAutoYes, setShowAutoYes] = useState(question.autoYesIf.length > 0)
+  const otherQuestions = questions.filter((x) => x.id !== q.id)
   const submit = (event) => {
     event.preventDefault()
     if (!q.text.trim()) return
     const draft = { ...q, text: q.text.trim(), short: (q.short || '').trim() || q.text.trim() }
-    const current = questions.find((item) => item.id === draft.id)
-    if (!isNew && !current) return onClose()
-    const saved = isNew ? draft : mergeFields(question, draft, current)
-    const nextQuestions = isNew ? [...questions, saved] : questions.map((item) => item.id === saved.id ? saved : item)
-    const cycle = questionDependencyCycle(nextQuestions, saved.id)
-    if (cycle) {
-      const names = cycle.map((id) => nextQuestions.find((item) => item.id === id)?.text || 'Unnamed question')
-      setValidationError(`These questions depend on each other in a loop: ${names.join(' → ')}. Change their follow-up conditions before saving.`)
-      return
-    }
-    onSave(saved)
+    const error = onSave(draft)
+    if (error) setValidationError(error)
   }
   return (
-    <Sheet title={isNew ? 'New question' : 'Edit question'} onClose={onClose}>
+    <Sheet title={isNew ? 'New question' : 'Edit question'} onClose={onClose} pinned={pinned}>
       <form onSubmit={submit}>
-        <label className="field">
-          <span>Question (yes / no)</span>
-          <input value={q.text} onChange={(e) => setQ({ ...q, text: e.target.value })} placeholder="Going skiing?" autoFocus={isNew} required />
-        </label>
-        <label className="field">
-          <span>Short label</span>
-          <input value={q.short ?? ''} onChange={(e) => setQ({ ...q, short: e.target.value })} placeholder="Skiing" />
-        </label>
-        <ConditionPicker
-          questions={questions.filter((x) => x.id !== q.id)}
-          value={q.askIf}
-          onChange={(askIf) => { setQ({ ...q, askIf }); setValidationError('') }}
-          legend="Only ask when…"
-          emptyText="Nothing selected: asked on every trip."
-          anyText="Asked when any selected is true."
-        />
-        {validationError && <p className="error-text small" role="alert">{validationError}</p>}
+        <div className="sheet-fields">
+          <label className="field">
+            <span>Question (yes / no)</span>
+            <input value={q.text} onChange={(e) => setQ({ ...q, text: e.target.value })} placeholder="Going skiing?" autoFocus={isNew} required />
+          </label>
+          <label className="field">
+            <span>Short label</span>
+            <input value={q.short ?? ''} onChange={(e) => setQ({ ...q, short: e.target.value })} placeholder="Skiing" />
+          </label>
+          <QuestionConditionPicker
+            questions={otherQuestions}
+            value={q.askIf}
+            onChange={(askIf) => { setQ({ ...q, askIf }); setValidationError('') }}
+          />
+          {showAutoYes ? (
+            <QuestionAutoYesPicker
+              questions={otherQuestions}
+              value={q.autoYesIf}
+              onChange={(autoYesIf) => { setQ({ ...q, autoYesIf }); setValidationError('') }}
+            />
+          ) : (
+            <button type="button" className="link small" onClick={() => setShowAutoYes(true)}>Add auto yes</button>
+          )}
+        </div>
+        {validationError && <p className="sheet-error error-text small" role="alert">{validationError}</p>}
         <div className="sheet-actions">
           {!isNew && <button type="button" className="btn danger-text" onClick={onDelete}>Delete</button>}
           <button className="btn primary">Save</button>
@@ -67,25 +68,39 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
 
   const onSaveTemplate = (t) => {
     setData((d) => {
-      if (editing.isNew) return saveTemplate(d, t)
+      if (editing.isNew) return saveTemplate(d, templateWithExistingConditions(t, d.questions))
       const current = d.templates.find((item) => item.id === t.id)
-      return current ? saveTemplate(d, mergeTemplate(editing.item, t, current)) : d
+      return current ? saveTemplate(d, templateWithExistingConditions(mergeTemplate(editing.item, t, current), d.questions)) : d
     })
     setTab(t.category)
     setSearch('')
     setEditing(null)
   }
-  const onSaveQuestion = (q) => {
-    setData((d) => editingQ.isNew || d.questions.some((item) => item.id === q.id) ? saveQuestion(d, q) : d)
-    setSearch('')
-    setEditingQ(null)
+  const onSaveQuestion = (draft) => {
+    let error = ''
+    setData((d) => {
+      const current = d.questions.find((item) => item.id === draft.id)
+      if (!editingQ.isNew && !current) return d
+      const q = editingQ.isNew ? draft : mergeFields(editingQ.q, draft, current)
+      const next = saveQuestion(d, withExistingConditions(q, d.questions))
+      const cycle = questionDependencyCycle(next.questions, q.id)
+      if (!cycle) return next
+      const names = cycle.map((id) => next.questions.find((item) => item.id === id)?.text || 'Unnamed question')
+      error = `These questions depend on each other in a loop: ${names.join(' → ')}. Change their Only ask when or Auto yes when choices before saving.`
+      return d
+    })
+    if (!error) {
+      setSearch('')
+      setEditingQ(null)
+    }
+    return error
   }
 
   const query = search.trim().toLocaleLowerCase()
   const tabLabel = TABS.find((item) => item.id === tab)?.label ?? tab
   const templates = data.templates.filter((t) => t.category === tab)
   const filteredTemplates = templates.filter((t) => {
-    const conditions = [...t.when, ...(t.requires ? [t.requires] : [])]
+    const conditions = t.conditionGroups.flatMap(({ all }) => all)
       .map((condition) => conditionLabel(condition, data.questions))
       .join(' ')
     return !query || `${t.text} ${t.group || ''} ${conditions}`.toLocaleLowerCase().includes(query)
@@ -96,7 +111,16 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
 
   return (
     <main>
-      <TopBar title="Master list" onBack={() => go(returnTo ?? { name: 'trips' })} backLabel={returnTo?.label ?? 'Trips'} />
+      <TopBar
+        title="Master list"
+        onBack={() => go(returnTo ?? { name: 'trips' })}
+        backLabel={returnTo?.label ?? 'Trips'}
+        action={tab !== 'questions' && (
+          <button type="button" className="link" onClick={() => setEditing({ item: newTemplate(tab), isNew: true })}>
+            Add item
+          </button>
+        )}
+      />
       <nav className="tabs" aria-label="Sections">
         {TABS.map((t) => (
           <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => { setTab(t.id); setSearch('') }}>{t.label}</button>
@@ -120,7 +144,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
           <p className="muted small pad-x">Asked when you plan a trip. Items can depend on the answers.</p>
           <div className="card list">
             {filteredQuestions.map((q) => {
-              const uses = data.templates.filter((t) => t.when.includes(q.id) || t.requires === q.id).length
+              const uses = data.templates.filter((t) => t.conditionGroups.some(({ all }) => all.includes(q.id))).length
               return (
                 <button key={q.id} className="list-row" onClick={() => setEditingQ({ q, isNew: false })}>
                   <span>
@@ -128,6 +152,11 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
                     {q.askIf.length > 0 && (
                       <small className="muted block">
                         Only asked: {q.askIf.map((c) => conditionLabel(c, data.questions)).join(' or ')}
+                      </small>
+                    )}
+                    {q.autoYesIf.length > 0 && (
+                      <small className="muted block">
+                        Auto yes: {q.autoYesIf.map((c) => conditionLabel(c, data.questions)).join(' or ')}
                       </small>
                     )}
                   </span>
@@ -153,11 +182,14 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
                       {t.text}
                       {t.perDay && <span className="qty">per day</span>}
                     </span>
-                    <span className="chips small">
-                      {t.requires && <span className="chip ghost strong">Only if {conditionLabel(t.requires, data.questions)}</span>}
-                      {t.when.length === 0
-                        ? !t.requires && <span className="chip ghost">Always</span>
-                        : t.when.map((c) => <span key={c} className="chip ghost">{conditionLabel(c, data.questions)}</span>)}
+                    <span className="chips condition-summary">
+                      {t.conditionGroups.length === 0 && <span className="chip ghost">Always</span>}
+                      {t.conditionGroups.map(({ all }, index) => (
+                        <Fragment key={index}>
+                          {index > 0 && <span className="muted small">or</span>}
+                          <span className="chip ghost">{all.map((c) => conditionLabel(c, data.questions)).join(' and ')}</span>
+                        </Fragment>
+                      ))}
                     </span>
                   </button>
                 ))}
@@ -165,12 +197,6 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
             </div>
           ))}
           {filteredTemplates.length === 0 && <div className="card"><p className="muted pad small">{query ? 'No matching items.' : 'Nothing here yet.'}</p></div>}
-          <button
-            className="btn wide add-btn"
-            onClick={() => setEditing({ item: newTemplate(tab), isNew: true })}
-          >
-            + Add item
-          </button>
         </section>
       )}
 
@@ -178,6 +204,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
         <TemplateSheet
           data={data}
           template={editing.item}
+          pinned
           onSave={onSaveTemplate}
           onClose={() => setEditing(null)}
           onDelete={() => {
@@ -198,6 +225,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
           question={editingQ.q}
           questions={data.questions}
           isNew={editingQ.isNew}
+          pinned
           onSave={onSaveQuestion}
           onClose={() => setEditingQ(null)}
           onDelete={() => {
@@ -205,7 +233,7 @@ export function MasterScreen({ data, setData, go, itemId, returnTo }) {
             setEditingQ(null)
             setConfirm({
               title: 'Delete question?',
-              message: `Items that depended on “${q.text}” will show on every trip unless they have other conditions.`,
+              message: `Item rules that use “${q.text}” will stop matching. Items that lose their last rule stay off trips until you edit them. Other questions’ Only ask when and Auto yes when choices will drop it.`,
               confirmLabel: 'Delete',
               onConfirm: () => setData((d) => deleteQuestion(d, q.id)),
             })

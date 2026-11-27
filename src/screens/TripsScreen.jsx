@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { ChoiceRow } from '../components'
-import { HIDE_DELAYS, loadPrefs, savePrefs, secondsLabel, TAP_PAUSES } from '../prefs'
+import { HIDE_DELAYS, loadPrefs, savePrefs, secondsLabel, SHOW_TIMING_SETTINGS, TAP_PAUSES } from '../prefs'
 import { daysBetween, formatRange, isComingHome, nightsLabel, tripItems, tripStatus } from '../model'
 
 function statusText(trip, today) {
@@ -33,6 +33,34 @@ function TripCard({ data, trip, today, go }) {
   )
 }
 
+function TimingSettings() {
+  const [prefs, setPrefs] = useState(loadPrefs)
+  const updatePrefs = (change) => {
+    const next = { ...prefs, ...change }
+    setPrefs(next)
+    savePrefs(next)
+  }
+
+  return (
+    <>
+      <ChoiceRow
+        label="Hide checked items after"
+        hint="When Hide completed is on"
+        options={HIDE_DELAYS.map((ms) => ({ value: ms, label: secondsLabel(ms, 'Now') }))}
+        value={prefs.hideDelay}
+        onChange={(hideDelay) => updatePrefs({ hideDelay })}
+      />
+      <ChoiceRow
+        label="Pause taps after moves"
+        hint="Ignores taps while rows shift"
+        options={TAP_PAUSES.map((ms) => ({ value: ms, label: secondsLabel(ms, 'Off') }))}
+        value={prefs.tapPause}
+        onChange={(tapPause) => updatePrefs({ tapPause })}
+      />
+    </>
+  )
+}
+
 export function TripsScreen({ data, go, today, user, authLoading, ownerEmail }) {
   const current = data.trips.filter((t) => !t.ended).sort((a, b) => a.start.localeCompare(b.start))
   const past = data.trips.filter((t) => t.ended).sort((a, b) => b.start.localeCompare(a.start))
@@ -40,12 +68,6 @@ export function TripsScreen({ data, go, today, user, authLoading, ownerEmail }) 
     : user ? user.email || 'Signed in'
     : ownerEmail ? <>{ownerEmail}<span className="account-status">Not signed in</span></>
     : 'Sign in'
-  const [prefs, setPrefs] = useState(loadPrefs)
-  const updatePrefs = (change) => {
-    const next = { ...prefs, ...change }
-    setPrefs(next)
-    savePrefs(next)
-  }
   return (
     <main>
       <header className="hero">
@@ -69,20 +91,7 @@ export function TripsScreen({ data, go, today, user, authLoading, ownerEmail }) 
           <button className="list-row" onClick={() => go({ name: 'master' })}>
             <span>Master list & questions</span><span className="muted">{data.templates.length} items ›</span>
           </button>
-          <ChoiceRow
-            label="Hide checked items after"
-            hint="When Hide completed is on"
-            options={HIDE_DELAYS.map((ms) => ({ value: ms, label: secondsLabel(ms, 'Now') }))}
-            value={prefs.hideDelay}
-            onChange={(hideDelay) => updatePrefs({ hideDelay })}
-          />
-          <ChoiceRow
-            label="Pause taps after moves"
-            hint="Ignores taps while rows shift"
-            options={TAP_PAUSES.map((ms) => ({ value: ms, label: secondsLabel(ms, 'Off') }))}
-            value={prefs.tapPause}
-            onChange={(tapPause) => updatePrefs({ tapPause })}
-          />
+          {SHOW_TIMING_SETTINGS && <TimingSettings />}
           <button className="list-row" onClick={() => go({ name: 'dataBackup' })}>
             <span>Data & backup</span><span className="muted">Import or export ›</span>
           </button>
